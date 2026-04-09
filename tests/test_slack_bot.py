@@ -392,7 +392,7 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn("한국거래소", quoted.text)
         self.assertIn("한국거래소", reversed_query.text)
 
-    def test_handle_query_ads_includes_company_mention_candidates(self) -> None:
+    def test_handle_query_ads_includes_sponsor_mention_candidates(self) -> None:
         candidate_info_path = self.data_dir / "ad_candidate.info.json"
         candidate_info_path.write_text(
             '{"description":"카카오의 새로운 금융 서비스와 앱 사용 흐름을 소개합니다."}',

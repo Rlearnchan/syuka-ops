@@ -12,7 +12,7 @@
 
 이미 아래 항목은 GitHub 업로드 기준으로 정리돼 있습니다.
 
-- `.env`, `.env.company` 제외
+- `.env`, `.env.company`, `.env.workspace` 제외
 - `data/db/*.db` 제외
 - `data/scripts/raw/*` 제외
 - `data/thumbnails/*` 제외

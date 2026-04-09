@@ -15,7 +15,7 @@ Windows 서버에 필요한 것:
 - Docker Desktop
 - 이 저장소의 `syuka-ops/` 폴더
 - 기존 운영 데이터 폴더 `syuka-ops/data/`
-- 회사 Slack 앱에서 발급한 토큰 2개
+- Slack 앱에서 발급한 토큰 2개
   - `SLACK_BOT_TOKEN`
   - `SLACK_APP_TOKEN`
 

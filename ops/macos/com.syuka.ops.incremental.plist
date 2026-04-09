@@ -9,11 +9,11 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>/Users/bae/Documents/code/syuka-gpt/syuka-ops/ops/macos/run_incremental.sh</string>
+    <string>/ABSOLUTE/PATH/TO/syuka-ops/ops/macos/run_incremental.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/bae/Documents/code/syuka-gpt/syuka-ops</string>
+  <string>/ABSOLUTE/PATH/TO/syuka-ops</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -27,9 +27,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/bae/Documents/code/syuka-gpt/syuka-ops/data/logs/launchd.out.log</string>
+  <string>/ABSOLUTE/PATH/TO/syuka-ops/data/logs/launchd.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/bae/Documents/code/syuka-gpt/syuka-ops/data/logs/launchd.err.log</string>
+  <string>/ABSOLUTE/PATH/TO/syuka-ops/data/logs/launchd.err.log</string>
 </dict>
 </plist>

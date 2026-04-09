@@ -1,8 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-BASE_DIR="/Users/bae/Documents/code/syuka-gpt/syuka-ops/data"
-PROJECT_DIR="/Users/bae/Documents/code/syuka-gpt/syuka-ops"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BASE_DIR="$PROJECT_DIR/data"
 LOG_DIR="$BASE_DIR/logs"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 

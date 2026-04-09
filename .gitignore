@@ -8,6 +8,7 @@ build/
 dist/
 .env
 .env.company
+.env.workspace
 data/db/*.db
 data/db/*.db-*
 data/logs/*

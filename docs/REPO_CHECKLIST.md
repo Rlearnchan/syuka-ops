@@ -4,7 +4,7 @@ Use this checklist right before the first push to GitHub.
 
 ## Secrets and data
 
-- Confirm `.env` and `.env.company` are not staged.
+- Confirm `.env`, `.env.company`, and `.env.workspace` are not staged.
 - Confirm `data/db`, `data/logs`, `data/reports`, `data/batches`, `data/scripts/raw`, and `data/thumbnails` are not staged.
 - Confirm no Slack tokens, OpenAI keys, or internal URLs are hardcoded in source or docs.
 

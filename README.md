@@ -344,7 +344,7 @@ ops\windows\retry_failed.bat
 
 주요 정리 내용:
 
-- 패치노트 기준 오픈 흐름은 `2026-03-25` 회사 Slack 베타 오픈, `2026-04-01` 상시 구동 환경 정비, `2026-04-08` 수집 자동화/DB 정합성 점검 보강입니다.
+- 패치노트 기준 오픈 흐름은 `2026-03-25` Slack 베타 오픈, `2026-04-01` 상시 구동 환경 정비, `2026-04-08` 수집 자동화/DB 정합성 점검 보강입니다.
 - Slack Home은 DM 탭 사용을 전제로 단순화했습니다. 버튼은 `슈카월드`, `주제찾기`, `언급찾기`, `광고찾기`를 유지합니다.
 - `전문` 보기는 Slack 한도에 맞춰 페이지네이션합니다. `다음 전문` / `이전 전문` 버튼으로 Slack 안에서 이어서 볼 수 있습니다.
 - 자동 자막 전문은 Slack 표시 시 계단식 중복 cue를 정리합니다. 원본 VTT는 유지하고, 표시/파싱 단계에서만 `A`, `A+B`, `B`, `B+C` 패턴을 병합합니다.
@@ -455,13 +455,13 @@ SLACK_ALLOWED_CHANNEL_IDS=C01234567,C07654321
 SLACK_ALLOWED_USER_IDS=U01234567
 ```
 
-회사 Slack용으로 토큰을 분리하고 싶다면 `.env.company`를 별도로 두는 방식을 권장합니다.
+별도 Slack workspace용으로 토큰을 분리하고 싶다면 `.env.workspace`를 별도로 두는 방식을 권장합니다.
 
 예:
 
 ```env
-SLACK_BOT_TOKEN=xoxb-company-...
-SLACK_APP_TOKEN=xapp-company-...
+SLACK_BOT_TOKEN=xoxb-workspace-...
+SLACK_APP_TOKEN=xapp-workspace-...
 SYUKA_DATA_DIR=./data
 SLACK_ALLOWED_CHANNEL_IDS=
 SLACK_ALLOWED_USER_IDS=
@@ -596,7 +596,7 @@ daily 운영 추천:
 
 현재 워크스페이스에는 `.git` 디렉터리가 없고, 이 셸에서는 `git` 실행기도 잡히지 않습니다. 따라서 지금 이 세션에서 바로 GitHub remote를 붙이거나 push까지 하지는 못합니다.
 
-자세한 순서는 [docs/GITHUB_SETUP.md](C:\Users\User1\Documents\code\syuka-ops\docs\GITHUB_SETUP.md)에 정리해두었습니다.
+자세한 순서는 [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)에 정리해두었습니다.
 
 준비 조건:
 

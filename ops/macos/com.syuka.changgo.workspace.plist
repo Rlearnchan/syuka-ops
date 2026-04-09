@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.syuka.changgo.workspace</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/ABSOLUTE/PATH/TO/syuka-ops/ops/macos/run_workspace_slack_bot.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/ABSOLUTE/PATH/TO/syuka-ops</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/syuka-ops/data/logs/workspace_slack_bot.launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/syuka-ops/data/logs/workspace_slack_bot.launchd.err.log</string>
+</dict>
+</plist>

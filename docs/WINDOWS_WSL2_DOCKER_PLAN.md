@@ -234,14 +234,14 @@ Windows에서 자동화는 보통 두 가지 선택지가 있습니다.
 등록:
 
 ```powershell
-cd C:\Users\User1\Documents\code\syuka-ops
+cd <repo-root>
 powershell -ExecutionPolicy Bypass -File .\ops\windows\register_collector_tasks.ps1
 ```
 
 삭제:
 
 ```powershell
-cd C:\Users\User1\Documents\code\syuka-ops
+cd <repo-root>
 powershell -ExecutionPolicy Bypass -File .\ops\windows\unregister_collector_tasks.ps1
 ```
 

@@ -48,11 +48,18 @@ def collect_log_metrics(paths: AppPaths, days: int) -> dict[str, Any]:
 
     for path in sorted(log_dir.glob("slack_bot_*.log")):
         slack_lines.extend(read_recent_lines(path, since))
-    for name in ("company_slack_bot.launchd.err.log", "company_slack_bot.launchd.out.log", "launchd.err.log", "launchd.out.log"):
+    for name in (
+        "workspace_slack_bot.launchd.err.log",
+        "workspace_slack_bot.launchd.out.log",
+        "company_slack_bot.launchd.err.log",
+        "company_slack_bot.launchd.out.log",
+        "launchd.err.log",
+        "launchd.out.log",
+    ):
         path = log_dir / name
         lines = read_recent_lines(path, since)
         slack_lines.extend(lines)
-        stale_mac_lines.extend([line for line in lines if "/Users/bae/Documents/code/syuka-gpt/syuka-ops" in line])
+        stale_mac_lines.extend([line for line in lines if "/syuka-gpt/syuka-ops" in line])
     for path in sorted(log_dir.glob("daily_update_*.log")):
         collector_lines.extend(read_recent_lines(path, since))
     for path in sorted(log_dir.glob("generate_analysis_*.log")):
