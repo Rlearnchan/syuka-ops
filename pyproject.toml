@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syuka-ops"
+version = "0.1.0"
+description = "SQLite-based Syukaworld collector and Slack bot"
+requires-python = ">=3.11"
+dependencies = [
+  "openpyxl>=3.1,<4",
+  "python-dotenv>=1.0,<2",
+  "requests>=2.32,<3",
+  "slack-bolt>=1.23,<2",
+  "srt>=3.5,<4",
+  "tqdm>=4.67,<5",
+  "yt-dlp>=2025.1.0,<2027",
+]
+
+[project.scripts]
+syuka-collect = "syuka_ops.cli:main"
+syuka-slack-bot = "syuka_ops.slack_bot:main"
+syuka-import-legacy-meta = "syuka_ops.import_legacy_meta:main"
+syuka-audit = "syuka_ops.audit:main"
+syuka-report = "syuka_ops.report:main"
+syuka-diagnostics = "syuka_ops.diagnostics:main"
+syuka-scheduler = "syuka_ops.scheduler:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

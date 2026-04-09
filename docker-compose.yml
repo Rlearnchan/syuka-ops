@@ -1,0 +1,49 @@
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: syuka-ops-collector
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
+    command:
+      - --mode
+      - incremental
+      - --base-dir
+      - /data
+
+  collector-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: syuka-ops-collector-scheduler
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
+    entrypoint:
+      - syuka-scheduler
+    command:
+      - --base-dir
+      - /data
+      - --incremental-times
+      - 00:00,09:00,18:00
+      - --retry-times
+      - 00:20
+
+  slack-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.slack
+    container_name: syuka-ops-slack-bot
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
