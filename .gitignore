@@ -16,6 +16,8 @@ data/reports/*
 !data/reports/.gitkeep
 data/batches/*
 !data/batches/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
 data/scripts/raw/*
 !data/scripts/raw/.gitkeep
 data/thumbnails/*
