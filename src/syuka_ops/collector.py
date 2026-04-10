@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
@@ -260,6 +260,7 @@ def fetch_video_infos(
     raw_dir = paths.raw_dir
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_tmpl = str(raw_dir / "%(upload_date>%Y-%m-%d)s__%(id)s__%(title)s")
+    target_video_ids: set[str] | None = None
 
     rows = []
     seen_ids = set()
@@ -272,6 +273,8 @@ def fetch_video_infos(
         ranges.append((f"{current_year - 5}1231", None))
     else:
         ranges = [(date_after, None)]
+        if only_last_n:
+            target_video_ids = set(channel_video_ids(channel_url, limit=only_last_n))
 
     for range_after, range_before in ranges:
         cmd = [
@@ -308,6 +311,8 @@ def fetch_video_infos(
             continue
         video_id = meta.get("id")
         if not video_id or video_id in seen_ids:
+            continue
+        if target_video_ids is not None and video_id not in target_video_ids:
             continue
         seen_ids.add(video_id)
         rows.append(
@@ -354,7 +359,7 @@ def upsert_videos(conn, rows: Iterable[dict]) -> None:
         upsert_video(conn, merge_with_existing_video(conn, row))
         count += 1
     conn.commit()
-    print(f"videos upsert 완료: {count}개")
+    print(f"videos upsert complete: {count}")
 
 
 def merge_with_existing_video(conn, row: dict) -> dict:
@@ -391,7 +396,7 @@ def refresh_videos_from_local_info_json(
         upsert_video(conn, merge_with_existing_video(conn, row))
         count += 1
     conn.commit()
-    print(f"local info.json refresh 완료: {count}개")
+    print(f"local info.json refresh complete: {count}")
     return count
 
 
@@ -435,7 +440,34 @@ def video_row_from_info_json(info_path: str, paths: AppPaths | None = None) -> d
 
 def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
     if options.video_ids:
-        return list(dict.fromkeys(options.video_ids))
+        requested_ids = list(dict.fromkeys(options.video_ids))
+        placeholders = ",".join("?" for _ in requested_ids)
+        existing_transcripts = transcript_video_ids(conn)
+        rows = conn.execute(
+            f"""
+            SELECT video_id, has_ko_sub, has_auto_ko_sub
+            FROM videos
+            WHERE video_id IN ({placeholders})
+            """,
+            requested_ids,
+        ).fetchall()
+        video_rows = {row["video_id"]: row for row in rows}
+        target_list: list[str] = []
+        for video_id in requested_ids:
+            row = video_rows.get(video_id)
+            if not row:
+                continue
+            if not row["has_ko_sub"] and not row["has_auto_ko_sub"]:
+                continue
+            transcript = conn.execute(
+                "SELECT subtitle_source FROM transcripts WHERE video_id = ?",
+                (video_id,),
+            ).fetchone()
+            needs_initial_download = video_id not in existing_transcripts
+            needs_manual_upgrade = bool(row["has_ko_sub"] and transcript and transcript["subtitle_source"] == "auto")
+            if needs_initial_download or needs_manual_upgrade:
+                target_list.append(video_id)
+        return target_list
 
     existing_transcripts = transcript_video_ids(conn)
     if options.mode == "retry-failed":
@@ -653,15 +685,15 @@ def sync_channel_meta(conn, paths: AppPaths, options: CollectOptions) -> None:
     db_ids = {row["video_id"] for row in db_rows}
     missing_ids = [video_id for video_id in channel_ids if video_id not in db_ids]
 
-    print(f"channel video ids: {len(channel_ids)}개")
-    print(f"db video ids: {len(db_ids)}개")
-    print(f"db에 없는 현재 채널 영상: {len(missing_ids)}개")
+    print(f"channel video ids: {len(channel_ids)}")
+    print(f"db video ids: {len(db_ids)}")
+    print(f"missing channel videos in db: {len(missing_ids)}")
 
     if options.video_batch_size > 0:
         start = (options.video_batch_index - 1) * options.video_batch_size
         end = start + options.video_batch_size
         missing_ids = missing_ids[start:end]
-        print(f"배치 적용 후 메타 보강 대상: {len(missing_ids)}개")
+        print(f"batch-scoped missing videos: {len(missing_ids)}")
 
     rows = fetch_video_infos_for_ids(paths, missing_ids, options)
     upsert_videos(conn, rows)
@@ -733,13 +765,13 @@ def select_metric_refresh_video_ids(conn, options: CollectOptions) -> list[str]:
 def refresh_subtitle_metadata(conn, paths: AppPaths, options: CollectOptions) -> None:
     target_video_ids = select_missing_subtitle_metadata_video_ids(conn, options)
     if not target_video_ids:
-        print("자막 메타 보강 대상이 없습니다.")
+        print("No subtitle metadata refresh targets.")
         return
 
-    print(f"자막 메타 보강 대상: {len(target_video_ids)}개")
+    print(f"subtitle metadata refresh targets: {len(target_video_ids)}")
     rows = fetch_video_infos_for_ids(paths, target_video_ids, options)
     if not rows:
-        print("자막 메타 보강 결과가 없습니다.")
+        print("No subtitle metadata rows were fetched.")
         return
     upsert_videos(conn, rows)
 
@@ -747,13 +779,13 @@ def refresh_subtitle_metadata(conn, paths: AppPaths, options: CollectOptions) ->
 def refresh_metrics(conn, paths: AppPaths, options: CollectOptions) -> None:
     target_video_ids = select_metric_refresh_video_ids(conn, options)
     if not target_video_ids:
-        print("메타 지표 갱신 대상이 없습니다.")
+        print("No metric refresh targets.")
         return
 
-    print(f"메타 지표 갱신 대상: {len(target_video_ids)}개")
+    print(f"metric refresh targets: {len(target_video_ids)}")
     rows = fetch_video_infos_for_ids(paths, target_video_ids, options)
     if not rows:
-        print("메타 지표 갱신 결과가 없습니다.")
+        print("No metric refresh rows were fetched.")
         return
     upsert_videos(conn, rows)
 
@@ -761,10 +793,10 @@ def refresh_metrics(conn, paths: AppPaths, options: CollectOptions) -> None:
 def backfill_info_json(conn, paths: AppPaths, options: CollectOptions) -> None:
     target_video_ids = select_missing_info_json_video_ids(conn, options)
     if not target_video_ids:
-        print("info.json 보강 대상이 없습니다.")
+        print("No info.json backfill targets.")
         return
 
-    print(f"info.json 보강 대상: {len(target_video_ids)}개")
+    print(f"info.json backfill targets: {len(target_video_ids)}")
     for video_id in tqdm(target_video_ids, desc="info.json backfill"):
         result = download_info_json_for_video(paths, video_id, options)
         record_attempt(conn, result)
@@ -887,10 +919,10 @@ def download_subtitle_for_video(
 def collect_transcripts(conn, paths: AppPaths, options: CollectOptions) -> None:
     target_video_ids = select_target_video_ids(conn, options)
     if not target_video_ids:
-        print("처리할 자막 대상이 없습니다.")
+        print("No subtitle collection targets.")
         return
 
-    print(f"자막 수집 대상: {len(target_video_ids)}개")
+    print(f"subtitle collection targets: {len(target_video_ids)}")
     for index, video_id in enumerate(tqdm(target_video_ids, desc="subtitle download"), start=1):
         video_row = conn.execute(
             """
@@ -1030,7 +1062,48 @@ def download_thumbnails(conn, paths: AppPaths, overwrite: bool = False) -> None:
                     break
             except requests.RequestException:
                 continue
-    print(f"thumbnail download 완료: {downloaded}개")
+    print(f"thumbnail download complete: {downloaded}")
+
+
+def download_thumbnails_for_video_ids(
+    conn,
+    paths: AppPaths,
+    video_ids: list[str],
+    *,
+    overwrite: bool = False,
+) -> None:
+    if not video_ids:
+        return
+    placeholders = ",".join("?" for _ in video_ids)
+    rows = conn.execute(
+        f"""
+        SELECT video_id, title, upload_date, thumbnail_url
+        FROM videos
+        WHERE video_id IN ({placeholders})
+        ORDER BY upload_date DESC
+        """,
+        video_ids,
+    ).fetchall()
+    if not rows:
+        return
+    session = requests.Session()
+    downloaded = 0
+    for row in tqdm(rows, desc="thumbnail download"):
+        safe_title = safe_title_for_path(row["title"], max_length=120)
+        output_path = paths.thumbnails_dir / f'{row["upload_date"]}_{row["video_id"]}_{safe_title}.jpg'
+        if not overwrite and thumbnail_exists_for_video(paths, row["video_id"]):
+            continue
+        for url in thumbnail_candidate_urls(row["video_id"], row["thumbnail_url"]):
+            try:
+                response = session.get(url, timeout=20)
+                content_type = response.headers.get("content-type", "").lower()
+                if response.status_code == 200 and response.content and content_type.startswith("image/"):
+                    output_path.write_bytes(response.content)
+                    downloaded += 1
+                    break
+            except requests.RequestException:
+                continue
+    print(f"thumbnail download complete: {downloaded}")
 
 
 def run_collect(options: CollectOptions) -> None:
@@ -1059,8 +1132,9 @@ def run_collect(options: CollectOptions) -> None:
                     retries=options.retries,
                 )
                 upsert_videos(conn, videos)
+                options = replace(options, video_ids=[row["video_id"] for row in videos])
             else:
-                print("최신 메타데이터로 보입니다. 메타 재조회는 건너뜁니다.")
+                print("Latest metadata is already up to date; skipping incremental metadata refresh.")
         elif options.mode == "sync-channel-meta":
             sync_channel_meta(conn, paths, options)
         elif options.mode == "backfill-info-json":
@@ -1070,9 +1144,9 @@ def run_collect(options: CollectOptions) -> None:
         elif options.mode == "refresh-subtitle-meta":
             refresh_subtitle_metadata(conn, paths, options)
         elif options.mode == "refresh-local-info":
-            print("로컬 info.json 기준으로 DB를 동기화합니다.")
+            print("Refreshing DB rows from local info.json files.")
         elif options.mode == "retry-failed":
-            print("실패한 자막만 재시도합니다.")
+            print("Retrying failed subtitle downloads.")
         elif options.mode == "sync-legacy-analysis":
             script_csv = Path(options.script_csv) if options.script_csv else default_script_csv_path()
             result = import_script_analysis(
@@ -1125,7 +1199,7 @@ def run_collect(options: CollectOptions) -> None:
         elif options.mode == "submit-analysis-batch":
             batch_path = options.analysis_batch_path
             if not batch_path:
-                raise RuntimeError("--analysis-batch-path 가 필요합니다.")
+                raise RuntimeError("--analysis-batch-path is required.")
             result = submit_openai_batch_analysis(
                 config=AnalysisConfig(
                     provider="openai",
@@ -1140,7 +1214,7 @@ def run_collect(options: CollectOptions) -> None:
             return
         elif options.mode == "check-analysis-batch":
             if not options.analysis_batch_id:
-                raise RuntimeError("--analysis-batch-id 가 필요합니다.")
+                raise RuntimeError("--analysis-batch-id is required.")
             result = fetch_openai_batch(
                 AnalysisConfig(
                     provider="openai",
@@ -1181,11 +1255,15 @@ def run_collect(options: CollectOptions) -> None:
             print(result)
             return
 
-        refresh_videos_from_local_info_json(conn, paths)
+        refresh_targets = set(options.video_ids) if options.video_ids else None
+        refresh_videos_from_local_info_json(conn, paths, refresh_targets)
         if not options.skip_transcripts:
             collect_transcripts(conn, paths, options)
         if not options.skip_thumbnails:
-            download_thumbnails(conn, paths)
+            if options.video_ids:
+                download_thumbnails_for_video_ids(conn, paths, options.video_ids)
+            else:
+                download_thumbnails(conn, paths)
     finally:
         conn.close()
 
@@ -1279,3 +1357,14 @@ def options_from_args(args: argparse.Namespace) -> CollectOptions:
         analysis_batch_id=args.analysis_batch_id,
         analysis_batch_output_file_id=args.analysis_batch_output_file_id,
     )
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    options = options_from_args(args)
+    run_collect(options)
+
+
+if __name__ == "__main__":
+    main()

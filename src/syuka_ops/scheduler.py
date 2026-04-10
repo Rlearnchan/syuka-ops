@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -67,10 +68,46 @@ def append_log(paths: AppPaths, message: str, *, timezone_name: str = DEFAULT_TI
     print(line, flush=True)
 
 
-def run_subcommand(args: list[str]) -> int:
+def run_subcommand(args: list[str]) -> subprocess.CompletedProcess[str]:
     command = [sys.executable, "-m", "syuka_ops.collector", *args]
-    process = subprocess.run(command, check=False, env=os.environ.copy())
-    return process.returncode
+    return subprocess.run(
+        command,
+        check=False,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+    )
+
+
+def log_subcommand_result(
+    paths: AppPaths,
+    *,
+    label: str,
+    result: subprocess.CompletedProcess[str],
+    timezone_name: str,
+    max_output_lines: int = 20,
+) -> None:
+    command_text = shlex.join(str(part) for part in result.args)
+    append_log(
+        paths,
+        f"[scheduler] {label} returncode={result.returncode} command={command_text}",
+        timezone_name=timezone_name,
+    )
+    for stream_name, content in (("stdout", result.stdout), ("stderr", result.stderr)):
+        if not content:
+            continue
+        lines = [line for line in content.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if len(lines) > max_output_lines:
+            append_log(
+                paths,
+                f"[scheduler] {label} {stream_name} truncated showing last {max_output_lines} of {len(lines)} lines",
+                timezone_name=timezone_name,
+            )
+            lines = lines[-max_output_lines:]
+        for line in lines:
+            append_log(paths, f"[scheduler] {label} {stream_name}: {line}", timezone_name=timezone_name)
 
 
 def maybe_run_job(paths: AppPaths, state: dict[str, object], *, job_name: str, hhmm: str, today: str) -> bool:
@@ -88,10 +125,11 @@ def maybe_run_job(paths: AppPaths, state: dict[str, object], *, job_name: str, h
 
 def run_incremental_cycle(paths: AppPaths, *, analysis_limit: int, timezone_name: str) -> None:
     append_log(paths, "[scheduler] incremental start", timezone_name=timezone_name)
-    run_subcommand(["--mode", "incremental", "--base-dir", str(paths.base_dir)])
+    result = run_subcommand(["--mode", "incremental", "--base-dir", str(paths.base_dir)])
+    log_subcommand_result(paths, label="incremental.collect", result=result, timezone_name=timezone_name)
     if os.environ.get("SYUKA_ANALYSIS_API_KEY") or os.environ.get("OPENAI_API_KEY"):
         append_log(paths, "[scheduler] analysis start", timezone_name=timezone_name)
-        run_subcommand(
+        result = run_subcommand(
             [
                 "--mode",
                 "generate-analysis",
@@ -103,14 +141,18 @@ def run_incremental_cycle(paths: AppPaths, *, analysis_limit: int, timezone_name
                 str(analysis_limit),
             ]
         )
-    run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
+        log_subcommand_result(paths, label="incremental.analysis", result=result, timezone_name=timezone_name)
+    result = run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
+    log_subcommand_result(paths, label="incremental.batch-sync", result=result, timezone_name=timezone_name)
     append_log(paths, "[scheduler] incremental finish", timezone_name=timezone_name)
 
 
 def run_retry_cycle(paths: AppPaths, *, timezone_name: str) -> None:
     append_log(paths, "[scheduler] retry-failed start", timezone_name=timezone_name)
-    run_subcommand(["--mode", "retry-failed", "--base-dir", str(paths.base_dir)])
-    run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
+    result = run_subcommand(["--mode", "retry-failed", "--base-dir", str(paths.base_dir)])
+    log_subcommand_result(paths, label="retry-failed.collect", result=result, timezone_name=timezone_name)
+    result = run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
+    log_subcommand_result(paths, label="retry-failed.batch-sync", result=result, timezone_name=timezone_name)
     append_log(paths, "[scheduler] retry-failed finish", timezone_name=timezone_name)
 
 
@@ -127,7 +169,8 @@ def should_sync_batches(state: dict[str, object], *, now_ts: float, interval_min
 
 def run_batch_sync(paths: AppPaths, state: dict[str, object], *, timezone_name: str) -> None:
     append_log(paths, "[scheduler] batch-sync start", timezone_name=timezone_name)
-    run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
+    result = run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
+    log_subcommand_result(paths, label="batch-sync.collect", result=result, timezone_name=timezone_name)
     state["last_batch_sync_at"] = time.time()
     save_state(paths, state)
     append_log(paths, "[scheduler] batch-sync finish", timezone_name=timezone_name)
