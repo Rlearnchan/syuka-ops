@@ -391,7 +391,7 @@ def refresh_videos_from_local_info_json(
         row = video_row_from_info_json(str(info_path), paths)
         if not row:
             continue
-        if video_ids and row["video_id"] not in video_ids:
+        if video_ids is not None and row["video_id"] not in video_ids:
             continue
         upsert_video(conn, merge_with_existing_video(conn, row))
         count += 1
@@ -439,8 +439,10 @@ def video_row_from_info_json(info_path: str, paths: AppPaths | None = None) -> d
 
 
 def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
-    if options.video_ids:
+    if options.video_ids is not None:
         requested_ids = list(dict.fromkeys(options.video_ids))
+        if not requested_ids:
+            return []
         placeholders = ",".join("?" for _ in requested_ids)
         existing_transcripts = transcript_video_ids(conn)
         rows = conn.execute(
@@ -535,7 +537,7 @@ def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
 
 
 def select_missing_info_json_video_ids(conn, options: CollectOptions) -> list[str]:
-    if options.video_ids:
+    if options.video_ids is not None:
         return list(dict.fromkeys(options.video_ids))
 
     conditions = ["(info_json_path IS NULL OR info_json_path = '')"]
@@ -700,7 +702,7 @@ def sync_channel_meta(conn, paths: AppPaths, options: CollectOptions) -> None:
 
 
 def select_missing_subtitle_metadata_video_ids(conn, options: CollectOptions) -> list[str]:
-    if options.video_ids:
+    if options.video_ids is not None:
         return list(dict.fromkeys(options.video_ids))
 
     conditions = ["has_ko_sub = 0", "has_auto_ko_sub = 0"]
@@ -728,7 +730,7 @@ def select_missing_subtitle_metadata_video_ids(conn, options: CollectOptions) ->
 
 
 def select_metric_refresh_video_ids(conn, options: CollectOptions) -> list[str]:
-    if options.video_ids:
+    if options.video_ids is not None:
         return list(dict.fromkeys(options.video_ids))
 
     conditions: list[str] = []
@@ -1147,6 +1149,7 @@ def run_collect(options: CollectOptions) -> None:
             print("Refreshing DB rows from local info.json files.")
         elif options.mode == "retry-failed":
             print("Retrying failed subtitle downloads.")
+            options = replace(options, video_ids=select_target_video_ids(conn, options))
         elif options.mode == "sync-legacy-analysis":
             script_csv = Path(options.script_csv) if options.script_csv else default_script_csv_path()
             result = import_script_analysis(
@@ -1255,12 +1258,12 @@ def run_collect(options: CollectOptions) -> None:
             print(result)
             return
 
-        refresh_targets = set(options.video_ids) if options.video_ids else None
+        refresh_targets = set(options.video_ids) if options.video_ids is not None else None
         refresh_videos_from_local_info_json(conn, paths, refresh_targets)
         if not options.skip_transcripts:
             collect_transcripts(conn, paths, options)
         if not options.skip_thumbnails:
-            if options.video_ids:
+            if options.video_ids is not None:
                 download_thumbnails_for_video_ids(conn, paths, options.video_ids)
             else:
                 download_thumbnails(conn, paths)
