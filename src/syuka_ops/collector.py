@@ -28,7 +28,14 @@ from .analysis_pipeline import (
     sync_generated_analysis,
 )
 from .batch_registry import register_submitted_batch, sync_registered_analysis_batches
-from .config import DEFAULT_CHANNEL_URL, AppPaths, resolve_stored_path
+from .config import (
+    DEFAULT_CHANNEL_KEY,
+    AppPaths,
+    channel_configs,
+    get_channel_by_url,
+    get_channel_config,
+    resolve_stored_path,
+)
 from .db import (
     connect,
     failed_subtitle_video_ids,
@@ -203,7 +210,8 @@ def should_skip_video(
 @dataclass
 class CollectOptions:
     mode: str
-    channel_url: str = DEFAULT_CHANNEL_URL
+    channel_url: str | None = None
+    channel_key: str | None = None
     base_dir: str = os.environ.get("SYUKA_DATA_DIR", "./data")
     sleep_requests: float = 0.4
     retries: int = 3
@@ -251,12 +259,18 @@ def yt_dlp_command() -> str:
 def fetch_video_infos(
     paths: AppPaths,
     channel_url: str,
+    *,
+    channel_key: str | None = None,
+    channel_name: str | None = None,
     only_last_n: Optional[int] = None,
     date_after: Optional[str] = None,
     use_date_ranges: bool = False,
     sleep_requests: float = 0.4,
     retries: int = 3,
 ) -> list[dict]:
+    resolved_channel = get_channel_by_url(channel_url)
+    effective_channel_key = channel_key or (resolved_channel.key if resolved_channel else DEFAULT_CHANNEL_KEY)
+    effective_channel_name = channel_name or (resolved_channel.display_name if resolved_channel else "슈카월드")
     raw_dir = paths.raw_dir
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_tmpl = str(raw_dir / "%(upload_date>%Y-%m-%d)s__%(id)s__%(title)s")
@@ -318,6 +332,8 @@ def fetch_video_infos(
         rows.append(
             {
                 "video_id": video_id,
+                "channel_key": effective_channel_key,
+                "channel_name": effective_channel_name,
                 "title": meta.get("title", ""),
                 "upload_date": norm_date(meta.get("upload_date", "")),
                 "view_count": meta.get("view_count", 0),
@@ -365,7 +381,7 @@ def upsert_videos(conn, rows: Iterable[dict]) -> None:
 def merge_with_existing_video(conn, row: dict) -> dict:
     existing = conn.execute(
         """
-        SELECT has_ko_sub, has_auto_ko_sub, thumbnail_url, source_url, info_json_path
+        SELECT channel_key, channel_name, has_ko_sub, has_auto_ko_sub, thumbnail_url, source_url, info_json_path
         FROM videos
         WHERE video_id = ?
         """,
@@ -375,6 +391,8 @@ def merge_with_existing_video(conn, row: dict) -> dict:
         return row
 
     merged = dict(row)
+    merged["channel_key"] = row.get("channel_key") or existing["channel_key"] or DEFAULT_CHANNEL_KEY
+    merged["channel_name"] = row.get("channel_name") or existing["channel_name"] or "슈카월드"
     merged["has_ko_sub"] = bool(row.get("has_ko_sub")) or bool(existing["has_ko_sub"])
     merged["has_auto_ko_sub"] = bool(row.get("has_auto_ko_sub")) or bool(existing["has_auto_ko_sub"])
     merged["thumbnail_url"] = row.get("thumbnail_url") or existing["thumbnail_url"]
@@ -400,8 +418,8 @@ def refresh_videos_from_local_info_json(
     return count
 
 
-def compute_incremental_last_n(conn) -> int | None:
-    latest_date = latest_video_date(conn)
+def compute_incremental_last_n(conn, *, channel_key: str | None = None) -> int | None:
+    latest_date = latest_video_date(conn, channel_key=channel_key)
     if not latest_date:
         return None
     latest = datetime.strptime(latest_date, "%Y-%m-%d").date()
@@ -424,8 +442,28 @@ def video_row_from_info_json(info_path: str, paths: AppPaths | None = None) -> d
         return None
 
     has_manual_ko, has_auto_ko = subtitle_availability(meta)
+    uploader_id = meta.get("uploader_id") or meta.get("channel_id")
+    uploader_name = meta.get("uploader") or meta.get("channel")
+    channel = None
+    if uploader_id:
+        for candidate in channel_configs():
+            uploader_id_text = str(uploader_id).lower()
+            if candidate.key in uploader_id_text:
+                channel = candidate
+                break
+    if channel is None:
+        webpage_url = str(meta.get("channel_url") or meta.get("uploader_url") or "")
+        channel = get_channel_by_url(webpage_url)
+    if channel is None:
+        channel_key = str(uploader_id or DEFAULT_CHANNEL_KEY)
+        channel_name = str(uploader_name or "슈카월드")
+    else:
+        channel_key = channel.key
+        channel_name = channel.display_name
     return {
         "video_id": video_id,
+        "channel_key": channel_key,
+        "channel_name": channel_name,
         "title": meta.get("title", ""),
         "upload_date": norm_date(meta.get("upload_date", "")),
         "view_count": meta.get("view_count", 0),
@@ -682,7 +720,9 @@ def download_info_json_for_video(paths: AppPaths, video_id: str, options: Collec
 
 
 def sync_channel_meta(conn, paths: AppPaths, options: CollectOptions) -> None:
-    channel_ids = channel_video_ids(options.channel_url)
+    channel_url = options.channel_url or get_channel_config(options.channel_key or DEFAULT_CHANNEL_KEY).url
+    channel = get_channel_by_url(channel_url)
+    channel_ids = channel_video_ids(channel_url)
     db_rows = conn.execute("SELECT video_id FROM videos").fetchall()
     db_ids = {row["video_id"] for row in db_rows}
     missing_ids = [video_id for video_id in channel_ids if video_id not in db_ids]
@@ -698,6 +738,10 @@ def sync_channel_meta(conn, paths: AppPaths, options: CollectOptions) -> None:
         print(f"batch-scoped missing videos: {len(missing_ids)}")
 
     rows = fetch_video_infos_for_ids(paths, missing_ids, options)
+    for row in rows:
+        if channel:
+            row["channel_key"] = channel.key
+            row["channel_name"] = channel.display_name
     upsert_videos(conn, rows)
 
 
@@ -1108,37 +1152,65 @@ def download_thumbnails_for_video_ids(
     print(f"thumbnail download complete: {downloaded}")
 
 
+def selected_channels(options: CollectOptions) -> list[tuple[str, str, str]]:
+    if options.channel_key:
+        channel = get_channel_config(options.channel_key)
+        return [(channel.key, channel.display_name, channel.url)]
+    if options.channel_url:
+        channel = get_channel_by_url(options.channel_url)
+        if channel:
+            return [(channel.key, channel.display_name, channel.url)]
+        return [(DEFAULT_CHANNEL_KEY, "슈카월드", options.channel_url)]
+    return [(channel.key, channel.display_name, channel.url) for channel in channel_configs()]
+
+
 def run_collect(options: CollectOptions) -> None:
     paths = AppPaths.from_base_dir(options.base_dir)
     paths.ensure()
     conn = connect(paths.db_path)
     init_db(conn)
     try:
+        channels = selected_channels(options)
         if options.mode == "full":
-            videos = fetch_video_infos(
-                paths,
-                channel_url=options.channel_url,
-                use_date_ranges=True,
-                sleep_requests=options.sleep_requests,
-                retries=options.retries,
-            )
+            videos: list[dict] = []
+            for channel_key, channel_name, channel_url in channels:
+                videos.extend(
+                    fetch_video_infos(
+                        paths,
+                        channel_url=channel_url,
+                        channel_key=channel_key,
+                        channel_name=channel_name,
+                        use_date_ranges=True,
+                        sleep_requests=options.sleep_requests,
+                        retries=options.retries,
+                    )
+                )
             upsert_videos(conn, videos)
         elif options.mode == "incremental":
-            last_n = compute_incremental_last_n(conn)
-            if last_n != 0:
-                videos = fetch_video_infos(
-                    paths,
-                    channel_url=options.channel_url,
-                    only_last_n=last_n,
-                    sleep_requests=options.sleep_requests,
-                    retries=options.retries,
+            videos: list[dict] = []
+            for channel_key, channel_name, channel_url in channels:
+                last_n = compute_incremental_last_n(conn, channel_key=channel_key)
+                if last_n == 0:
+                    continue
+                videos.extend(
+                    fetch_video_infos(
+                        paths,
+                        channel_url=channel_url,
+                        channel_key=channel_key,
+                        channel_name=channel_name,
+                        only_last_n=last_n,
+                        sleep_requests=options.sleep_requests,
+                        retries=options.retries,
+                    )
                 )
+            if videos:
                 upsert_videos(conn, videos)
                 options = replace(options, video_ids=[row["video_id"] for row in videos])
             else:
                 print("Latest metadata is already up to date; skipping incremental metadata refresh.")
         elif options.mode == "sync-channel-meta":
-            sync_channel_meta(conn, paths, options)
+            for channel_key, _, channel_url in channels:
+                sync_channel_meta(conn, paths, replace(options, channel_key=channel_key, channel_url=channel_url))
         elif options.mode == "backfill-info-json":
             backfill_info_json(conn, paths, options)
         elif options.mode == "refresh-metrics":
@@ -1295,7 +1367,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="incremental",
     )
     parser.add_argument("--base-dir", default=os.environ.get("SYUKA_DATA_DIR", "./data"))
-    parser.add_argument("--channel-url", default=DEFAULT_CHANNEL_URL)
+    parser.add_argument("--channel-url", default=None)
+    parser.add_argument("--channel-key", choices=[channel.key for channel in channel_configs()], default=None)
     parser.add_argument("--sleep-requests", type=float, default=0.4)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--max-attempts", type=int, default=4)
@@ -1334,6 +1407,7 @@ def options_from_args(args: argparse.Namespace) -> CollectOptions:
         mode=args.mode,
         base_dir=args.base_dir,
         channel_url=args.channel_url,
+        channel_key=args.channel_key,
         sleep_requests=args.sleep_requests,
         retries=args.retries,
         max_attempts=args.max_attempts,

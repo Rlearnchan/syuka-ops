@@ -24,6 +24,8 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS videos (
             video_id TEXT PRIMARY KEY,
+            channel_key TEXT NOT NULL DEFAULT 'syukaworld',
+            channel_name TEXT NOT NULL DEFAULT '슈카월드',
             title TEXT NOT NULL,
             upload_date TEXT,
             view_count INTEGER,
@@ -74,6 +76,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     existing_video_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(videos)").fetchall()
     }
+    if "channel_key" not in existing_video_columns:
+        conn.execute("ALTER TABLE videos ADD COLUMN channel_key TEXT NOT NULL DEFAULT 'syukaworld'")
+    if "channel_name" not in existing_video_columns:
+        conn.execute("ALTER TABLE videos ADD COLUMN channel_name TEXT NOT NULL DEFAULT '슈카월드'")
     if "has_auto_ko_sub" not in existing_video_columns:
         conn.execute("ALTER TABLE videos ADD COLUMN has_auto_ko_sub INTEGER NOT NULL DEFAULT 0")
 
@@ -84,6 +90,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE transcripts ADD COLUMN subtitle_source TEXT NOT NULL DEFAULT 'manual'")
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_upload_date ON videos(upload_date DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_channel_upload_date ON videos(channel_key, upload_date DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_has_ko_sub ON videos(has_ko_sub, upload_date DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_has_auto_ko_sub ON videos(has_auto_ko_sub, upload_date DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_analysis_source ON video_analysis(analysis_source, updated_at DESC)")
@@ -96,10 +103,12 @@ def upsert_video(conn: sqlite3.Connection, row: dict) -> None:
     conn.execute(
         """
         INSERT INTO videos (
-            video_id, title, upload_date, view_count, like_count, has_ko_sub,
+            video_id, channel_key, channel_name, title, upload_date, view_count, like_count, has_ko_sub,
             has_auto_ko_sub, thumbnail_url, source_url, info_json_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(video_id) DO UPDATE SET
+            channel_key=excluded.channel_key,
+            channel_name=excluded.channel_name,
             title=excluded.title,
             upload_date=excluded.upload_date,
             view_count=excluded.view_count,
@@ -113,6 +122,8 @@ def upsert_video(conn: sqlite3.Connection, row: dict) -> None:
         """,
         (
             row["video_id"],
+            row.get("channel_key", "syukaworld"),
+            row.get("channel_name", "슈카월드"),
             row["title"],
             row.get("upload_date"),
             row.get("view_count"),
@@ -187,8 +198,14 @@ def record_attempt(conn: sqlite3.Connection, row: dict) -> None:
     )
 
 
-def latest_video_date(conn: sqlite3.Connection) -> str | None:
-    row = conn.execute("SELECT MAX(upload_date) AS latest_date FROM videos").fetchone()
+def latest_video_date(conn: sqlite3.Connection, *, channel_key: str | None = None) -> str | None:
+    if channel_key:
+        row = conn.execute(
+            "SELECT MAX(upload_date) AS latest_date FROM videos WHERE channel_key = ?",
+            (channel_key,),
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT MAX(upload_date) AS latest_date FROM videos").fetchone()
     return row["latest_date"] if row and row["latest_date"] else None
 
 
@@ -220,10 +237,16 @@ def failed_subtitle_video_ids(conn: sqlite3.Connection) -> set[str]:
 
 
 def recent_videos(
-    conn: sqlite3.Connection, limit: int = 10, offset: int = 0
+    conn: sqlite3.Connection, limit: int = 10, offset: int = 0, *, channel_key: str | None = None
 ) -> list[sqlite3.Row]:
+    params: list[object] = []
+    where_sql = ""
+    if channel_key:
+        where_sql = "WHERE v.channel_key = ?"
+        params.append(channel_key)
+    params.extend([limit, offset])
     return conn.execute(
-        """
+        f"""
         SELECT
             v.*,
             t.segment_count,
@@ -235,22 +258,27 @@ def recent_videos(
         FROM videos v
         LEFT JOIN transcripts t ON t.video_id = v.video_id
         LEFT JOIN video_analysis a ON a.video_id = v.video_id
+        {where_sql}
         ORDER BY v.upload_date DESC
         LIMIT ?
         OFFSET ?
         """,
-        (limit, offset),
+        params,
     ).fetchall()
 
 
-def recent_video_count(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT COUNT(*) AS c FROM videos").fetchone()
+def recent_video_count(conn: sqlite3.Connection, *, channel_key: str | None = None) -> int:
+    if channel_key:
+        row = conn.execute("SELECT COUNT(*) AS c FROM videos WHERE channel_key = ?", (channel_key,)).fetchone()
+    else:
+        row = conn.execute("SELECT COUNT(*) AS c FROM videos").fetchone()
     return int(row["c"] or 0)
 
 
 def browse_videos(
     conn: sqlite3.Connection,
     *,
+    channel_key: str | None = None,
     year: str | None = None,
     sort: str = "latest",
     limit: int = 10,
@@ -258,6 +286,9 @@ def browse_videos(
 ) -> list[sqlite3.Row]:
     clauses: list[str] = []
     params: list[object] = []
+    if channel_key:
+        clauses.append("v.channel_key = ?")
+        params.append(channel_key)
     if year:
         clauses.append("COALESCE(v.upload_date, '') LIKE ?")
         params.append(f"{year}-%")
@@ -290,9 +321,12 @@ def browse_videos(
     return conn.execute(sql, params).fetchall()
 
 
-def browse_video_count(conn: sqlite3.Connection, *, year: str | None = None) -> int:
+def browse_video_count(conn: sqlite3.Connection, *, channel_key: str | None = None, year: str | None = None) -> int:
     clauses: list[str] = []
     params: list[object] = []
+    if channel_key:
+        clauses.append("channel_key = ?")
+        params.append(channel_key)
     if year:
         clauses.append("COALESCE(upload_date, '') LIKE ?")
         params.append(f"{year}-%")
@@ -302,12 +336,17 @@ def browse_video_count(conn: sqlite3.Connection, *, year: str | None = None) -> 
 
 
 def search_videos(
-    conn: sqlite3.Connection, query: str, limit: int = 10, offset: int = 0
+    conn: sqlite3.Connection, query: str, limit: int = 10, offset: int = 0, *, channel_key: str | None = None
 ) -> list[sqlite3.Row]:
     like = f"%{query}%"
     compact_like = f"%{normalized_search_query(query)}%"
+    params: list[object] = []
+    channel_clause = ""
+    if channel_key:
+        channel_clause = "v.channel_key = ? AND ("
+        params.append(channel_key)
     return conn.execute(
-        """
+        f"""
         SELECT DISTINCT
             v.*,
             t.subtitle_source,
@@ -340,7 +379,7 @@ def search_videos(
         FROM videos v
         LEFT JOIN transcripts t ON t.video_id = v.video_id
         LEFT JOIN video_analysis a ON a.video_id = v.video_id
-        WHERE REPLACE(v.title, ' ', '') LIKE ?
+        WHERE {channel_clause}REPLACE(v.title, ' ', '') LIKE ?
            OR v.video_id LIKE ?
            OR REPLACE(COALESCE(a.summary, ''), ' ', '') LIKE ?
            OR REPLACE(COALESCE(a.keywords_json, ''), ' ', '') LIKE ?
@@ -350,11 +389,12 @@ def search_videos(
                 WHERE tx.video_id = v.video_id
                   AND REPLACE(tx.dialogue, ' ', '') LIKE ?
            )
+        {')' if channel_key else ''}
         ORDER BY relevance_score DESC, v.upload_date DESC
         LIMIT ?
         OFFSET ?
         """,
-        (
+        params + [
             compact_like,
             like,
             compact_like,
@@ -372,19 +412,24 @@ def search_videos(
             compact_like,
             limit,
             offset,
-        ),
+        ],
     ).fetchall()
 
 
-def search_videos_count(conn: sqlite3.Connection, query: str) -> int:
+def search_videos_count(conn: sqlite3.Connection, query: str, *, channel_key: str | None = None) -> int:
     like = f"%{query}%"
     compact_like = f"%{normalized_search_query(query)}%"
+    params: list[object] = []
+    channel_clause = ""
+    if channel_key:
+        channel_clause = "v.channel_key = ? AND ("
+        params.append(channel_key)
     row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) AS c
         FROM videos v
         LEFT JOIN video_analysis a ON a.video_id = v.video_id
-        WHERE REPLACE(v.title, ' ', '') LIKE ?
+        WHERE {channel_clause}REPLACE(v.title, ' ', '') LIKE ?
            OR v.video_id LIKE ?
            OR REPLACE(COALESCE(a.summary, ''), ' ', '') LIKE ?
            OR REPLACE(COALESCE(a.keywords_json, ''), ' ', '') LIKE ?
@@ -394,15 +439,21 @@ def search_videos_count(conn: sqlite3.Connection, query: str) -> int:
                 WHERE tx.video_id = v.video_id
                   AND REPLACE(tx.dialogue, ' ', '') LIKE ?
            )
+        {')' if channel_key else ''}
         """,
-        (compact_like, like, compact_like, compact_like, compact_like),
+        params + [compact_like, like, compact_like, compact_like, compact_like],
     ).fetchone()
     return int(row["c"] or 0)
 
 
-def get_video(conn: sqlite3.Connection, video_id: str) -> sqlite3.Row | None:
+def get_video(conn: sqlite3.Connection, video_id: str, *, channel_key: str | None = None) -> sqlite3.Row | None:
+    where_sql = "WHERE v.video_id = ?"
+    params: list[object] = [video_id]
+    if channel_key:
+        where_sql += " AND v.channel_key = ?"
+        params.append(channel_key)
     return conn.execute(
-        """
+        f"""
         SELECT
             v.*,
             t.dialogue,
@@ -416,20 +467,29 @@ def get_video(conn: sqlite3.Connection, video_id: str) -> sqlite3.Row | None:
         FROM videos v
         LEFT JOIN transcripts t ON t.video_id = v.video_id
         LEFT JOIN video_analysis a ON a.video_id = v.video_id
-        WHERE v.video_id = ?
+        {where_sql}
         """,
-        (video_id,),
+        params,
     ).fetchone()
 
 
 def transcript_snippets(
-    conn: sqlite3.Connection, query: str, limit: int = 5, offset: int = 0
+    conn: sqlite3.Connection, query: str, limit: int = 5, offset: int = 0, *, channel_key: str | None = None
 ) -> list[sqlite3.Row]:
     like = f"%{normalized_search_query(query)}%"
+    params: list[object] = []
+    where_sql = "WHERE REPLACE(t.dialogue, ' ', '') LIKE ?"
+    params.append(like)
+    if channel_key:
+        where_sql += " AND v.channel_key = ?"
+        params.append(channel_key)
+    params.extend([limit, offset])
     return conn.execute(
-        """
+        f"""
         SELECT
             v.video_id,
+            v.channel_key,
+            v.channel_name,
             v.title,
             v.upload_date,
             v.view_count,
@@ -445,34 +505,49 @@ def transcript_snippets(
         FROM transcripts t
         JOIN videos v ON v.video_id = t.video_id
         LEFT JOIN video_analysis a ON a.video_id = v.video_id
-        WHERE REPLACE(t.dialogue, ' ', '') LIKE ?
+        {where_sql}
         ORDER BY v.upload_date DESC
         LIMIT ?
         OFFSET ?
         """,
-        (like, limit, offset),
+        params,
     ).fetchall()
 
 
-def transcript_snippets_count(conn: sqlite3.Connection, query: str) -> int:
+def transcript_snippets_count(conn: sqlite3.Connection, query: str, *, channel_key: str | None = None) -> int:
     like = f"%{normalized_search_query(query)}%"
+    params: list[object] = [like]
+    where_sql = "WHERE REPLACE(t.dialogue, ' ', '') LIKE ?"
+    if channel_key:
+        where_sql += " AND EXISTS (SELECT 1 FROM videos v WHERE v.video_id = t.video_id AND v.channel_key = ?)"
+        params.append(channel_key)
     row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) AS c
         FROM transcripts t
-        WHERE REPLACE(t.dialogue, ' ', '') LIKE ?
+        {where_sql}
         """,
-        (like,),
+        params,
     ).fetchone()
     return int(row["c"] or 0)
 
 
 def video_rows_with_info_json(
-    conn: sqlite3.Connection, *, limit: int = 0, offset: int = 0
+    conn: sqlite3.Connection, *, channel_key: str | None = None, limit: int = 0, offset: int = 0
 ) -> list[sqlite3.Row]:
+    where_clauses = [
+        "info_json_path IS NOT NULL",
+        "TRIM(info_json_path) != ''",
+    ]
+    params: list[object] = []
+    if channel_key:
+        where_clauses.append("channel_key = ?")
+        params.append(channel_key)
     sql = """
         SELECT
             video_id,
+            channel_key,
+            channel_name,
             title,
             upload_date,
             view_count,
@@ -481,11 +556,10 @@ def video_rows_with_info_json(
             source_url,
             info_json_path
         FROM videos
-        WHERE info_json_path IS NOT NULL
-          AND TRIM(info_json_path) != ''
+        WHERE {where_sql}
         ORDER BY upload_date DESC, video_id DESC
     """
-    params: list[int] = []
+    sql = sql.format(where_sql=" AND ".join(where_clauses))
     if limit and limit > 0:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])

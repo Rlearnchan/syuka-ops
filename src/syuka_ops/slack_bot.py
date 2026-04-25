@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from .config import AppPaths
+from .config import AppPaths, get_channel_config
 from .ad_utils import detect_paid_promotion, has_ad_signal, load_info_json, query_snippet
 from .db import (
     browse_video_count,
@@ -74,6 +74,27 @@ def configure_logging() -> None:
 
 logger = logging.getLogger(__name__)
 USER_NAME_CACHE: dict[str, str] = {}
+CHANNEL_BROWSE_COMMANDS = {
+    "world": ("syukaworld", "슈카월드"),
+    "슈카월드": ("syukaworld", "슈카월드"),
+    "월드": ("syukaworld", "슈카월드"),
+    "moneycomics": ("moneymoneycomics", "머니코믹스"),
+    "moneymoneycomics": ("moneymoneycomics", "머니코믹스"),
+    "머니코믹스": ("moneymoneycomics", "머니코믹스"),
+    "머코": ("moneymoneycomics", "머니코믹스"),
+}
+PREFIXED_CHANNEL_COMMANDS = {
+    "월드주제": ("search", "syukaworld"),
+    "월드언급": ("transcript", "syukaworld"),
+    "월드광고": ("ads", "syukaworld"),
+    "월드썸넬": ("thumbnail", "syukaworld"),
+    "월드썸네일": ("thumbnail", "syukaworld"),
+    "머코주제": ("search", "moneymoneycomics"),
+    "머코언급": ("transcript", "moneymoneycomics"),
+    "머코광고": ("ads", "moneymoneycomics"),
+    "머코썸넬": ("thumbnail", "moneymoneycomics"),
+    "머코썸네일": ("thumbnail", "moneymoneycomics"),
+}
 
 
 @dataclass
@@ -206,7 +227,9 @@ def subtitle_status_label(row) -> str:
 
 
 def video_meta_line(row) -> str:
-    return f"`{row['video_id']}` | {row['upload_date']} | {subtitle_status_label(row)}"
+    channel_name = row_text(row, "channel_name")
+    channel_part = f"{channel_name} | " if channel_name else ""
+    return f"`{row['video_id']}` | {channel_part}{row['upload_date']} | {subtitle_status_label(row)}"
 
 
 def video_stats_line(row) -> str:
@@ -404,26 +427,31 @@ def help_text() -> str:
             "",
             "처음 쓰는 분께 추천:",
             "`/syuka 슈카월드`",
-            "`/syuka 주제찾기 반도체`",
-            "`/syuka 언급찾기 관세`",
-            "`/syuka 광고찾기 한국거래소`",
+            "`/syuka 월드주제 반도체`",
+            "`/syuka 머코주제 금리`",
+            "`/syuka 월드언급 관세`",
+            "`/syuka 머코썸넬 반도체`",
             "`/syuka 썸네일 반도체`",
             "",
             "자주 쓰는 방법:",
             "- 최근 영상 훑기: `/syuka 슈카월드`",
-            "- 특정 주제 찾기: `/syuka 주제찾기 반도체`",
-            "- 자막에서 실제 언급 찾기: `/syuka 언급찾기 관세`",
-            "- 광고 사례 찾기: `/syuka 광고찾기 한국거래소`",
-            "- 썸네일 크게 보기: `/syuka 썸네일 반도체` 또는 `/syuka 썸네일 abc123`",
+            "- 슈카월드 주제 찾기: `/syuka 월드주제 반도체`",
+            "- 머니코믹스 주제 찾기: `/syuka 머코주제 금리`",
+            "- 자막에서 실제 언급 찾기: `/syuka 월드언급 관세`",
+            "- 광고 사례 찾기: `/syuka 머코광고 삼성`",
+            "- 썸네일 크게 보기: `/syuka 머코썸넬 반도체` 또는 `/syuka 썸네일 abc123`",
+            "- 기존 범용 명령도 그대로 가능: `/syuka 주제찾기 반도체`, `/syuka 썸네일 반도체`",
             "- 수집 상태 보기: `/syuka collect-status`",
             "",
             "명령어 목록:",
             "- `help`: 이 안내 보기",
-            "- `슈카월드`: 최근 업로드 영상 브라우징",
+            "- `슈카월드` / `머니코믹스`: 채널별 최근 업로드 브라우징",
             "- `recent [개수] [페이지]` / `latest` / `최신이슈`: 예전 방식의 최근 영상 보기",
             "- `search <키워드>` / `topic <키워드>` / `주제찾기 <키워드>`: 제목+자막 통합 검색",
             "- `transcript <키워드>` / `mention <키워드>` / `언급찾기 <키워드>`: 자막 본문 검색",
             "- `ads <업체명 또는 키워드>` / `광고찾기 <업체명>`: 광고 사례 검색",
+            "- `월드주제/월드언급/월드광고/월드썸넬`: 슈카월드 전용 바로가기",
+            "- `머코주제/머코언급/머코광고/머코썸넬`: 머니코믹스 전용 바로가기",
             "- `video <video_id>`: 특정 영상 상세 보기",
             "- `full <video_id>` / `전문 <video_id>`: 전문 대목 더 보기",
             "- `thumbnail <video_id 또는 키워드>` / `썸네일 <video_id 또는 키워드>`: 썸네일 보기",
@@ -432,8 +460,10 @@ def help_text() -> str:
             "",
             "예시:",
             "`/syuka 슈카월드`",
+            "`/syuka 머니코믹스`",
             "`/syuka search 반도체`",
-            "`/syuka 주제찾기 반도체`",
+            "`/syuka 월드주제 반도체`",
+            "`/syuka 머코언급 금리`",
             '`/syuka search "AI 반도체" --limit 3 --page 2`',
             "`/syuka video abc123`",
             "`/syuka 전문 abc123`",
@@ -454,28 +484,32 @@ def friendly_error_response() -> SlackResponse:
     )
 
 
-def no_results_response(query: str, *, kind: str) -> SlackResponse:
+def no_results_response(query: str, *, kind: str, channel_label: str | None = None) -> SlackResponse:
+    browse_hint = f"/syuka {channel_label} 최신 5" if channel_label else "/syuka 슈카월드 최신 5"
+    search_hint = f"/syuka {channel_label}주제 <키워드>" if channel_label and channel_label in {"월드", "머코"} else "/syuka 주제찾기 <키워드>"
+    transcript_hint = f"/syuka {channel_label}언급 <키워드>" if channel_label and channel_label in {"월드", "머코"} else "/syuka 언급찾기 <키워드>"
+    thumbnail_hint = f"/syuka {channel_label}썸넬 <video_id>" if channel_label and channel_label in {"월드", "머코"} else "/syuka 썸네일 <video_id>"
     hints = {
         "search": (
             f"`{query}` 관련 영상을 찾지 못했습니다.\n"
             "다음처럼 다시 시도해 보세요:\n"
             "- 더 짧은 키워드로 검색\n"
-            "- `/syuka 언급찾기 <키워드>` 로 자막 본문 검색\n"
-            "- `/syuka 슈카월드 최신 5` 로 전체 흐름부터 훑어보기"
+            f"- `{transcript_hint}` 로 자막 본문 검색\n"
+            f"- `{browse_hint}` 로 전체 흐름부터 훑어보기"
         ),
         "transcript": (
             f"`{query}` 관련 자막 스니펫이 없습니다.\n"
             "다음처럼 다시 시도해 보세요:\n"
             "- 더 짧은 키워드나 비슷한 표현 사용\n"
-            "- `/syuka 주제찾기 <키워드>` 로 제목+자막 통합 검색\n"
-            "- `/syuka 슈카월드 최신 5` 로 최근 흐름부터 먼저 확인"
+            f"- `{search_hint}` 로 제목+자막 통합 검색\n"
+            f"- `{browse_hint}` 로 최근 흐름부터 먼저 확인"
         ),
         "thumbnail": (
             f"`{query}` 관련 썸네일 후보를 찾지 못했습니다.\n"
             "다음처럼 다시 시도해 보세요:\n"
             "- 더 짧은 키워드로 검색\n"
-            "- `/syuka 주제찾기 <키워드>` 로 먼저 후보 영상 찾기\n"
-            "- 정확한 `video_id`가 있으면 `/syuka 썸네일 <video_id>` 사용"
+            f"- `{search_hint}` 로 먼저 후보 영상 찾기\n"
+            f"- 정확한 `video_id`가 있으면 `{thumbnail_hint}` 사용"
         ),
     }
     return SlackResponse(text=hints[kind])
@@ -821,10 +855,11 @@ def examples_response() -> SlackResponse:
         [
             "추천질문",
             "- 최근 영상 보기: `/syuka 슈카월드`",
-            "- 주제 찾기: `/syuka 주제찾기 반도체`",
-            "- 실제 발언 찾기: `/syuka 언급찾기 관세`",
-            "- 광고 사례 찾기: `/syuka 광고찾기 한국거래소`",
-            "- 썸네일 보기: `/syuka 썸네일 반도체`",
+            "- 머코 최근 보기: `/syuka 머니코믹스`",
+            "- 월드 주제 찾기: `/syuka 월드주제 반도체`",
+            "- 머코 실제 발언 찾기: `/syuka 머코언급 금리`",
+            "- 머코 광고 사례 찾기: `/syuka 머코광고 삼성`",
+            "- 썸네일 보기: `/syuka 머코썸넬 반도체`",
             "- 영상 상세 보기: `/syuka video abc123`",
         ]
     )
@@ -833,18 +868,25 @@ def examples_response() -> SlackResponse:
         block_section(
             "*이렇게 물어보면 바로 써보기 좋습니다*\n"
             "`/syuka 슈카월드`\n"
-            "`/syuka 주제찾기 반도체`\n"
-            "`/syuka 언급찾기 관세`\n"
-            "`/syuka 광고찾기 한국거래소`\n"
-            "`/syuka 썸네일 반도체`\n"
+            "`/syuka 머니코믹스`\n"
+            "`/syuka 월드주제 반도체`\n"
+            "`/syuka 머코언급 금리`\n"
+            "`/syuka 머코광고 삼성`\n"
+            "`/syuka 머코썸넬 반도체`\n"
             "`/syuka collect-status`"
         ),
         block_actions(
             button_command("슈카월드", "슈카월드", action_id="run_command_world"),
-            button_command("주제찾기", "주제찾기 반도체", action_id="run_command_topic"),
-            button_command("언급찾기", "언급찾기 관세", action_id="run_command_mention"),
-            button_command("광고찾기", "광고찾기 한국거래소", action_id="run_command_ads"),
-            button_command("썸네일", "썸네일 반도체", action_id="run_command_thumbnail"),
+            button_command("머니코믹스", "머니코믹스", action_id="run_command_moneycomics"),
+            button_command("월드주제", "월드주제 반도체", action_id="run_command_topic"),
+            button_command("머코언급", "머코언급 금리", action_id="run_command_mention"),
+            button_command("머코광고", "머코광고 삼성", action_id="run_command_ads"),
+        ),
+        block_actions(
+            button_command("월드언급", "월드언급 관세", action_id="run_command_world_mention"),
+            button_command("머코주제", "머코주제 금리", action_id="run_command_money_topic"),
+            button_command("머코썸넬", "머코썸넬 반도체", action_id="run_command_money_thumbnail"),
+            button_command("도움말", "help", action_id="run_command_help"),
         ),
     ]
     return SlackResponse(text=text, blocks=blocks)
@@ -863,24 +905,39 @@ def help_response() -> SlackResponse:
         block_section(
             "*처음엔 이렇게 써보세요*\n"
             "1. 최근 흐름을 보고 싶으면 `슈카월드`\n"
-            "2. 특정 주제가 궁금하면 `주제찾기 반도체`\n"
-            "3. 실제 발언을 찾고 싶으면 `언급찾기 관세`\n"
-            "4. 광고 사례를 찾고 싶으면 `광고찾기 한국거래소`\n"
-            "5. 썸네일을 보고 싶으면 `썸네일 반도체`"
+            "2. 머니코믹스 흐름을 보려면 `머니코믹스`\n"
+            "3. 특정 주제가 궁금하면 `월드주제 반도체`\n"
+            "4. 실제 발언을 찾고 싶으면 `머코언급 금리`\n"
+            "5. 광고 사례를 찾고 싶으면 `머코광고 삼성`"
         ),
         block_actions(
             button_command("슈카월드", "슈카월드", action_id="run_command_world"),
-            button_command("주제찾기 예시", "주제찾기 반도체", action_id="run_command_topic"),
-            button_command("언급찾기 예시", "언급찾기 관세", action_id="run_command_mention"),
-            button_command("광고찾기 예시", "광고찾기 한국거래소", action_id="run_command_ads"),
+            button_command("머니코믹스", "머니코믹스", action_id="run_command_moneycomics"),
+            button_command("월드주제", "월드주제 반도체", action_id="run_command_topic"),
+            button_command("머코언급", "머코언급 금리", action_id="run_command_mention"),
+            button_command("머코광고", "머코광고 삼성", action_id="run_command_ads"),
+        ),
+        block_section(
+            "*채널별 빠른 시작*\n"
+            "슈카월드: `슈카월드` → `월드주제 반도체` → `월드언급 관세`\n"
+            "머니코믹스: `머니코믹스` → `머코주제 금리` → `머코언급 금리`"
+        ),
+        block_actions(
+            button_command("월드언급", "월드언급 관세", action_id="run_command_world_mention"),
+            button_command("월드썸넬", "월드썸넬 반도체", action_id="run_command_world_thumbnail"),
+            button_command("머코주제", "머코주제 금리", action_id="run_command_money_topic"),
+            button_command("머코썸넬", "머코썸넬 반도체", action_id="run_command_money_thumbnail"),
+            button_command("추천질문", "추천질문", action_id="run_command_examples"),
         ),
         block_divider(),
         block_section(
             "*무엇을 할 수 있나요?*\n"
-            "`슈카월드` 최근 업로드 영상 훑기\n"
+            "`슈카월드` `머니코믹스` 채널별 최근 업로드 영상 훑기\n"
             "`주제찾기 <키워드>` 주제가 나온 영상 찾기\n"
             "`언급찾기 <키워드>` 자막 속 실제 발언 찾기\n"
             "`광고찾기 [업체명 또는 키워드]` 설명에 광고/지원 문구가 있는 영상 찾기\n"
+            "`월드주제/월드언급/월드광고/월드썸넬` 슈카월드 전용 바로가기\n"
+            "`머코주제/머코언급/머코광고/머코썸넬` 머니코믹스 전용 바로가기\n"
             "`video <video_id>` 영상 하나 자세히 보기\n"
             "`전문 <video_id>` 전문 대목 더 보기\n"
             "`썸네일 <키워드 또는 video_id>` 썸네일 보기\n"
@@ -891,10 +948,11 @@ def help_response() -> SlackResponse:
         block_section(
             "*자주 쓰는 예시*\n"
             "`/syuka 슈카월드`\n"
-            "`/syuka 주제찾기 반도체`\n"
-            "`/syuka 언급찾기 관세`\n"
-            "`/syuka 광고찾기 한국거래소`\n"
-            "`/syuka 썸네일 반도체`\n"
+            "`/syuka 머니코믹스`\n"
+            "`/syuka 월드주제 반도체`\n"
+            "`/syuka 머코언급 금리`\n"
+            "`/syuka 머코광고 삼성`\n"
+            "`/syuka 머코썸넬 반도체`\n"
             "`/syuka video abc123`\n"
             "`/syuka 전문 abc123`\n"
             "`/syuka collect-status`"
@@ -949,7 +1007,15 @@ def browse_response(
     return SlackResponse(text=text, blocks=blocks)
 
 
-def search_response(query: str, rows, *, limit: int, page: int, total_count: int) -> SlackResponse:
+def search_response(
+    query: str,
+    rows,
+    *,
+    limit: int,
+    page: int,
+    total_count: int,
+    command_name: str = "search",
+) -> SlackResponse:
     text = f"`{query}` 검색 결과:\n" + "\n".join(format_video_row(row) for row in rows)
     blocks = [
         block_header(f"검색 결과: {query}"),
@@ -986,7 +1052,7 @@ def search_response(query: str, rows, *, limit: int, page: int, total_count: int
                 button_link("유튜브", youtube_url(row), action_id="open_youtube_link"),
             )
         )
-    pager = pagination_actions(command="search", query=query, limit=limit, page=page, row_count=len(rows))
+    pager = pagination_actions(command=command_name, query=query, limit=limit, page=page, row_count=len(rows))
     if pager:
         blocks.extend([block_divider(), pager])
     return SlackResponse(text=text, blocks=blocks)
@@ -1114,6 +1180,7 @@ def full_transcript_response(row, *, page: int = 1, chunks_per_page: int = 8) ->
         page_chunks = chunks[start : start + chunks_per_page]
         text_lines.append(f"전문 줄 수: {total_lines:,}")
         text_lines.append(f"전문 페이지: {safe_page}/{page_count}")
+        text_lines.extend(page_chunks)
         blocks.extend(
             [
                 block_divider(),
@@ -1172,7 +1239,15 @@ def full_transcript_response(row, *, page: int = 1, chunks_per_page: int = 8) ->
     return SlackResponse(text="\n".join(text_lines), blocks=blocks)
 
 
-def transcript_response(query: str, rows, *, limit: int, page: int, total_count: int) -> SlackResponse:
+def transcript_response(
+    query: str,
+    rows,
+    *,
+    limit: int,
+    page: int,
+    total_count: int,
+    command_name: str = "transcript",
+) -> SlackResponse:
     lines = []
     blocks = [
         block_header(f"자막 스니펫: {query}"),
@@ -1231,18 +1306,25 @@ def transcript_response(query: str, rows, *, limit: int, page: int, total_count:
                 button_link("유튜브", youtube_url(row), action_id="open_youtube_link"),
             )
         )
-    pager = pagination_actions(command="transcript", query=query, limit=limit, page=page, row_count=len(rows))
+    pager = pagination_actions(command=command_name, query=query, limit=limit, page=page, row_count=len(rows))
     if pager:
         blocks.extend([block_divider(), pager])
     return SlackResponse(text="\n".join(lines), blocks=blocks)
 
 
-def ad_search_rows(conn, *, query: str, limit: int, page: int) -> tuple[list[dict[str, Any]], int]:
+def ad_search_rows(
+    conn,
+    *,
+    query: str,
+    limit: int,
+    page: int,
+    channel_key: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     offset = (page - 1) * limit
     matched: list[dict[str, Any]] = []
     lower_query = query.lower().strip()
 
-    for row in video_rows_with_info_json(conn):
+    for row in video_rows_with_info_json(conn, channel_key=channel_key):
         info = load_info_json(row["info_json_path"])
         description = info.get("description") or ""
         detected = detect_paid_promotion(description)
@@ -1293,7 +1375,15 @@ def ad_search_rows(conn, *, query: str, limit: int, page: int) -> tuple[list[dic
     return matched[offset : offset + limit], total_count
 
 
-def ad_search_response(query: str, rows: list[dict[str, Any]], *, limit: int, page: int, total_count: int) -> SlackResponse:
+def ad_search_response(
+    query: str,
+    rows: list[dict[str, Any]],
+    *,
+    limit: int,
+    page: int,
+    total_count: int,
+    command_name: str = "ads",
+) -> SlackResponse:
     text_lines = [f"`{query}` 광고 사례 검색 결과:"]
     blocks = [
         block_header(f"광고 사례: {query}"),
@@ -1328,7 +1418,7 @@ def ad_search_response(query: str, rows: list[dict[str, Any]], *, limit: int, pa
                 button_link("유튜브", row["source_url"] or f"https://www.youtube.com/watch?v={row['video_id']}", action_id="open_youtube_link"),
             )
         )
-    pager = pagination_actions(command="ads", query=query, limit=limit, page=page, row_count=len(rows))
+    pager = pagination_actions(command=command_name, query=query, limit=limit, page=page, row_count=len(rows))
     if pager:
         blocks.extend([block_divider(), pager])
     return SlackResponse(text="\n".join(text_lines), blocks=blocks)
@@ -1361,7 +1451,15 @@ def thumbnail_response(row) -> SlackResponse:
     return SlackResponse(text=text, blocks=blocks)
 
 
-def thumbnail_candidates_response(query: str, rows, *, limit: int, page: int, total_count: int) -> SlackResponse:
+def thumbnail_candidates_response(
+    query: str,
+    rows,
+    *,
+    limit: int,
+    page: int,
+    total_count: int,
+    command_name: str = "thumbnail",
+) -> SlackResponse:
     text = f"`{query}` 관련 썸네일 후보:\n" + "\n".join(format_video_row(row) for row in rows)
     blocks = [
         block_header(f"썸네일 후보: {query}"),
@@ -1387,7 +1485,7 @@ def thumbnail_candidates_response(query: str, rows, *, limit: int, page: int, to
             button_link("유튜브", youtube_url(row), action_id="open_youtube_link"),
         ]
         blocks.append(block_actions(*action_items))
-    pager = pagination_actions(command="thumbnail", query=query, limit=limit, page=page, row_count=len(rows))
+    pager = pagination_actions(command=command_name, query=query, limit=limit, page=page, row_count=len(rows))
     if pager:
         blocks.extend([block_divider(), pager])
     return SlackResponse(text=text, blocks=blocks)
@@ -1401,20 +1499,50 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
             block_header("슈카창고"),
             block_section(
                 f"*{welcome_name}님, DM 탭에서 바로 시작해보세요.*\n"
-                "슈카월드 영상, 전문, 요약을 빠르게 찾는 내부 검색 도구입니다."
+                "슈카월드와 머니코믹스 영상, 전문, 요약을 빠르게 찾는 내부 검색 도구입니다."
+            ),
+            block_divider(),
+            block_section(
+                "*채널 카드: 슈카월드*\n"
+                "긴 시계열 이슈, 거시경제, 국제정세, 산업 분석을 훑기 좋습니다.\n"
+                "추천 시작: `슈카월드` → `월드주제 반도체` → `월드언급 관세`"
             ),
             block_actions(
                 button_command("슈카월드", "슈카월드", action_id="run_command_home_world"),
-                button_command("주제찾기", "주제찾기 반도체", action_id="run_command_home_topic"),
-                button_command("언급찾기", "언급찾기 관세율 공식을 말했다고 합니다", action_id="run_command_home_mention"),
-                button_command("광고찾기", "광고찾기 카카오", action_id="run_command_home_ads"),
+                button_command("월드주제", "월드주제 반도체", action_id="run_command_home_topic"),
+                button_command("월드언급", "월드언급 관세", action_id="run_command_home_world_mention"),
+                button_command("월드광고", "월드광고 한국거래소", action_id="run_command_home_world_ads"),
+                button_command("월드썸넬", "월드썸넬 반도체", action_id="run_command_home_world_thumbnail"),
+            ),
+            block_section(
+                "*채널 카드: 머니코믹스*\n"
+                "짧은 포맷, 실전 투자 이야기, 인터뷰와 예능성 콘텐츠를 빠르게 찾기 좋습니다.\n"
+                "추천 시작: `머니코믹스` → `머코주제 금리` → `머코언급 금리`"
+            ),
+            block_actions(
+                button_command("머니코믹스", "머니코믹스", action_id="run_command_home_moneycomics"),
+                button_command("머코주제", "머코주제 금리", action_id="run_command_home_money_topic"),
+                button_command("머코언급", "머코언급 금리", action_id="run_command_home_mention"),
+                button_command("머코광고", "머코광고 카카오", action_id="run_command_home_ads"),
+                button_command("머코썸넬", "머코썸넬 반도체", action_id="run_command_home_money_thumbnail"),
+            ),
+            block_section(
+                "*공용 도구*\n"
+                "범용 명령과 빠른 진입 버튼도 그대로 쓸 수 있습니다."
+            ),
+            block_actions(
+                button_command("추천질문", "추천질문", action_id="run_command_home_examples"),
+                button_command("도움말", "help", action_id="run_command_home_help"),
+                button_command("collect-status", "collect-status", action_id="run_command_home_status"),
+                button_command("주제찾기", "주제찾기 반도체", action_id="run_command_home_generic_topic"),
+                button_command("광고찾기", "광고찾기 카카오", action_id="run_command_home_generic_ads"),
             ),
             block_divider(),
             block_section(
                 "*누가 어떻게 쓰면 좋을까요?*\n"
-                "• *리서처* `주제찾기 반도체` : 예전에 다룬 주제, 비슷한 사례, 관련 영상을 한 번에 모아볼 때 좋습니다.\n"
-                "• *편집/PD* `언급찾기 관세율 공식을 말했다고 합니다` : 특정 표현이 나온 대목과 시점을 확인하고, 필요한 영상만 전문으로 이어서 볼 수 있습니다.\n"
-                "• *마케터* `광고찾기 카카오` : 과거 광고 사례와 광고주를 확인하며 협찬 문맥을 점검할 때 유용합니다."
+                "• *리서처* `월드주제 반도체` 또는 `주제찾기 반도체` : 예전에 다룬 주제, 비슷한 사례, 관련 영상을 한 번에 모아볼 때 좋습니다.\n"
+                "• *편집/PD* `머코언급 금리` : 특정 표현이 나온 대목과 시점을 확인하고, 필요한 영상만 전문으로 이어서 볼 수 있습니다.\n"
+                "• *마케터* `머코광고 카카오` 또는 `광고찾기 카카오` : 과거 광고 사례와 광고주를 확인하며 협찬 문맥을 점검할 때 유용합니다."
             ),
             block_divider(),
             block_section(
@@ -1425,7 +1553,7 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
             ),
             block_section(
                 "*다른 호출 방법*\n"
-                "채널에서는 `/syuka 슈카월드`, `@슈카창고 help`처럼 호출할 수 있습니다."
+                "채널에서는 `/syuka 슈카월드`, `/syuka 머니코믹스`, `@슈카창고 help`처럼 호출할 수 있습니다."
             ),
         ],
     }
@@ -1510,15 +1638,25 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
         return help_response()
 
     parts = text.split(maxsplit=1)
-    command = parts[0].lower()
+    raw_command = parts[0].strip()
+    command = raw_command.lower()
     argument = parts[1].strip() if len(parts) > 1 else ""
+    channel_key: str | None = None
+    channel_display_name: str | None = None
+    command_name = raw_command
+
+    if raw_command in PREFIXED_CHANNEL_COMMANDS:
+        command, channel_key = PREFIXED_CHANNEL_COMMANDS[raw_command]
+        channel_display_name = get_channel_config(channel_key).display_name
+    elif raw_command in CHANNEL_BROWSE_COMMANDS:
+        channel_key, channel_display_name = CHANNEL_BROWSE_COMMANDS[raw_command]
+        command = "channel-browse"
+
     command_aliases = {
         "도움말": "help",
         "examples": "examples",
         "추천": "examples",
         "추천질문": "examples",
-        "world": "world",
-        "슈카월드": "world",
         "recent": "recent",
         "latest": "recent",
         "최근": "recent",
@@ -1542,7 +1680,9 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
         "status": "collect-status",
         "상태": "collect-status",
     }
-    command = command_aliases.get(command, command)
+    if command_name == raw_command:
+        command = command_aliases.get(command, command)
+        command_name = command
 
     try:
         conn = with_db(data_dir=data_dir)
@@ -1553,24 +1693,24 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
             if command == "examples":
                 return examples_response()
 
-            if command == "world":
+            if command == "channel-browse":
                 year, sort, limit, page = parse_world_options(argument)
-                total_count = browse_video_count(conn, year=year)
-                rows = browse_videos(conn, year=year, sort=sort, limit=limit, offset=(page - 1) * limit)
+                total_count = browse_video_count(conn, channel_key=channel_key, year=year)
+                rows = browse_videos(conn, channel_key=channel_key, year=year, sort=sort, limit=limit, offset=(page - 1) * limit)
                 if not rows:
                     year_label = f"{year}년 " if year else ""
-                    return SlackResponse(text=f"{year_label}조건에 맞는 영상을 찾지 못했습니다.")
+                    return SlackResponse(text=f"{channel_display_name or '채널'}에서 {year_label}조건에 맞는 영상을 찾지 못했습니다.")
                 sort_label = {
                     "latest": "최신순",
                     "likes": "좋아요순",
                     "views": "조회수순",
                 }.get(sort, "최신순")
                 if year:
-                    header = f"슈카월드 {year}년"
-                    text_title = f"슈카월드 {year}년 {sort_label}"
+                    header = f"{channel_display_name} {year}년"
+                    text_title = f"{channel_display_name} {year}년 {sort_label}"
                 else:
-                    header = "슈카월드"
-                    text_title = f"슈카월드 {sort_label}"
+                    header = channel_display_name or "채널"
+                    text_title = f"{channel_display_name or '채널'} {sort_label}"
                 query_parts: list[str] = []
                 if year:
                     query_parts.append(f"{year}년")
@@ -1585,7 +1725,7 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
                     rows,
                     header=header,
                     text_title=text_title,
-                    command_name="world",
+                    command_name=command_name,
                     command_query=command_query,
                     limit=limit,
                     page=page,
@@ -1612,16 +1752,17 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
                 query, limit, page = parse_argument_options(argument)
                 if not query:
                     return SlackResponse(text="사용법: `search <키워드>` 또는 `/syuka 주제찾기 <키워드>`")
-                total_count = search_videos_count(conn, query)
-                rows = search_videos(conn, query, limit=limit, offset=(page - 1) * limit)
+                total_count = search_videos_count(conn, query, channel_key=channel_key)
+                rows = search_videos(conn, query, limit=limit, offset=(page - 1) * limit, channel_key=channel_key)
                 if not rows:
-                    return no_results_response(query, kind="search")
-                return search_response(query, rows, limit=limit, page=page, total_count=total_count)
+                    prefix = get_channel_config(channel_key).command_prefix if channel_key else None
+                    return no_results_response(query, kind="search", channel_label=prefix)
+                return search_response(query, rows, limit=limit, page=page, total_count=total_count, command_name=command_name)
 
             if command == "video":
                 if not argument:
                     return SlackResponse(text="사용법: `video <video_id>` 또는 `/syuka 영상 <video_id>`")
-                row = get_video(conn, argument)
+                row = get_video(conn, argument, channel_key=channel_key)
                 if not row:
                     return SlackResponse(text=f"`{argument}` 영상을 찾지 못했습니다.")
                 return video_response(row)
@@ -1630,7 +1771,7 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
                 if not argument:
                     return SlackResponse(text="사용법: `full <video_id>` 또는 `/syuka 전문 <video_id>`")
                 video_id, _, page = parse_argument_options(argument)
-                row = get_video(conn, video_id)
+                row = get_video(conn, video_id, channel_key=channel_key)
                 if not row:
                     return SlackResponse(text=f"`{video_id}` 영상을 찾지 못했습니다.")
                 return full_transcript_response(row, page=page)
@@ -1638,38 +1779,40 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
             if command == "thumbnail":
                 if not argument:
                     return SlackResponse(text="사용법: `thumbnail <video_id 또는 키워드>` 또는 `/syuka 썸네일 <키워드>`")
-                row = get_video(conn, argument)
+                row = get_video(conn, argument, channel_key=channel_key)
                 if row:
                     return thumbnail_response(row)
                 query, limit, page = parse_argument_options(argument)
                 if not query:
                     return SlackResponse(text="사용법: `thumbnail <video_id 또는 키워드>`")
-                total_count = search_videos_count(conn, query)
-                rows = search_videos(conn, query, limit=limit, offset=(page - 1) * limit)
+                total_count = search_videos_count(conn, query, channel_key=channel_key)
+                rows = search_videos(conn, query, limit=limit, offset=(page - 1) * limit, channel_key=channel_key)
                 if not rows:
-                    return no_results_response(query, kind="thumbnail")
+                    prefix = get_channel_config(channel_key).command_prefix if channel_key else None
+                    return no_results_response(query, kind="thumbnail", channel_label=prefix)
                 if len(rows) == 1:
                     return thumbnail_response(rows[0])
-                return thumbnail_candidates_response(query, rows, limit=limit, page=page, total_count=total_count)
+                return thumbnail_candidates_response(query, rows, limit=limit, page=page, total_count=total_count, command_name=command_name)
 
             if command == "transcript":
                 query, limit, page = parse_argument_options(argument)
                 if not query:
                     return SlackResponse(text="사용법: `transcript <키워드>` 또는 `/syuka 언급찾기 <키워드>`")
-                total_count = transcript_snippets_count(conn, query)
-                rows = transcript_snippets(conn, query, limit=limit, offset=(page - 1) * limit)
+                total_count = transcript_snippets_count(conn, query, channel_key=channel_key)
+                rows = transcript_snippets(conn, query, limit=limit, offset=(page - 1) * limit, channel_key=channel_key)
                 if not rows:
-                    return no_results_response(query, kind="transcript")
-                return transcript_response(query, rows, limit=limit, page=page, total_count=total_count)
+                    prefix = get_channel_config(channel_key).command_prefix if channel_key else None
+                    return no_results_response(query, kind="transcript", channel_label=prefix)
+                return transcript_response(query, rows, limit=limit, page=page, total_count=total_count, command_name=command_name)
 
             if command == "ads":
                 query, limit, page = parse_argument_options(argument)
                 if not query:
                     return SlackResponse(text="사용법: `ads <업체명 또는 키워드>` 또는 `/syuka 광고찾기 <업체명>`")
-                rows, total_count = ad_search_rows(conn, query=query, limit=limit, page=page)
+                rows, total_count = ad_search_rows(conn, query=query, limit=limit, page=page, channel_key=channel_key)
                 if not rows:
                     return SlackResponse(text=f"`{query}` 관련 광고 사례를 찾지 못했습니다.")
-                return ad_search_response(query, rows, limit=limit, page=page, total_count=total_count)
+                return ad_search_response(query, rows, limit=limit, page=page, total_count=total_count, command_name=command_name)
 
             if command in {"collect-status", "status"}:
                 stats = collection_stats(conn)

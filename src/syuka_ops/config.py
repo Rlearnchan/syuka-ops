@@ -7,6 +7,31 @@ from typing import Iterable
 
 
 DEFAULT_CHANNEL_URL = "https://www.youtube.com/@syukaworld/videos"
+DEFAULT_CHANNEL_KEY = "syukaworld"
+
+
+@dataclass(frozen=True)
+class ChannelConfig:
+    key: str
+    display_name: str
+    url: str
+    command_prefix: str
+
+
+CHANNELS: tuple[ChannelConfig, ...] = (
+    ChannelConfig(
+        key="syukaworld",
+        display_name="슈카월드",
+        url="https://www.youtube.com/@syukaworld/videos",
+        command_prefix="월드",
+    ),
+    ChannelConfig(
+        key="moneymoneycomics",
+        display_name="머니코믹스",
+        url="https://www.youtube.com/@moneymoneycomics/videos",
+        command_prefix="머코",
+    ),
+)
 
 
 @dataclass
@@ -46,6 +71,27 @@ class AppPaths:
 
 def env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(name, default)
+
+
+def channel_configs() -> tuple[ChannelConfig, ...]:
+    return CHANNELS
+
+
+def get_channel_config(channel_key: str) -> ChannelConfig:
+    for channel in CHANNELS:
+        if channel.key == channel_key:
+            return channel
+    raise KeyError(f"Unknown channel key: {channel_key}")
+
+
+def get_channel_by_url(channel_url: str) -> ChannelConfig | None:
+    normalized = str(channel_url or "").strip().rstrip("/")
+    for channel in CHANNELS:
+        if channel.url.rstrip("/") == normalized:
+            return channel
+        if normalized and f"@{channel.key}".lower() in normalized.lower():
+            return channel
+    return None
 
 
 def _normalized_basename(path_value: str | Path | None) -> str:
