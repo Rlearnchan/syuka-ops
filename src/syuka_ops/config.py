@@ -16,6 +16,7 @@ class ChannelConfig:
     key: str
     display_name: str
     url: str
+    shorts_url: str
     command_prefix: str
 
 
@@ -24,12 +25,14 @@ CHANNELS: tuple[ChannelConfig, ...] = (
         key="syukaworld",
         display_name="슈카월드",
         url="https://www.youtube.com/@syukaworld/videos",
+        shorts_url="https://www.youtube.com/@syukaworld/shorts",
         command_prefix="월드",
     ),
     ChannelConfig(
         key="moneymoneycomics",
         display_name="머니코믹스",
         url="https://www.youtube.com/@moneymoneycomics/videos",
+        shorts_url="https://www.youtube.com/@moneymoneycomics/shorts",
         command_prefix="머코",
     ),
 )
@@ -88,7 +91,7 @@ def get_channel_config(channel_key: str) -> ChannelConfig:
 def get_channel_by_url(channel_url: str) -> ChannelConfig | None:
     normalized = str(channel_url or "").strip().rstrip("/")
     for channel in CHANNELS:
-        if channel.url.rstrip("/") == normalized:
+        if channel.url.rstrip("/") == normalized or channel.shorts_url.rstrip("/") == normalized:
             return channel
         if normalized and f"@{channel.key}".lower() in normalized.lower():
             return channel

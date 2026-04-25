@@ -159,6 +159,25 @@ class SlackBotTestCase(unittest.TestCase):
                 "analysis_source": "legacy_script",
             },
         )
+        upsert_video(
+            self.conn,
+            {
+                "video_id": "short001",
+                "channel_key": "syukaworld",
+                "channel_name": "슈카월드",
+                "title": "염소 쇼츠 클립",
+                "upload_date": "2026-03-23",
+                "duration_seconds": 42,
+                "is_short": True,
+                "view_count": 777777,
+                "like_count": 9999,
+                "has_ko_sub": False,
+                "has_auto_ko_sub": False,
+                "thumbnail_url": "https://example.com/short.jpg",
+                "source_url": "https://www.youtube.com/shorts/short001",
+                "info_json_path": str(self.info_path),
+            },
+        )
         record_attempt(
             self.conn,
             {
@@ -233,6 +252,7 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn("슈카월드 최신순", response.text)
         self.assertIn("new999", response.text)
         self.assertIn("결과 1/3건", response.blocks[1]["text"]["text"])
+        self.assertNotIn("short001", response.text)
 
     def test_channel_browse_pagination_keeps_channel_scope(self) -> None:
         response = slack_bot.handle_query("슈카월드 최신 1 --page 2", data_dir=str(self.data_dir))
@@ -263,6 +283,12 @@ class SlackBotTestCase(unittest.TestCase):
         response = slack_bot.handle_query("슈카월드 2025년 좋아요", data_dir=str(self.data_dir))
         self.assertIn("슈카월드 2025년 좋아요순", response.text)
         self.assertIn("year2025", response.text)
+
+    def test_handle_query_world_shorts(self) -> None:
+        response = slack_bot.handle_query("월드쇼츠 최신 5", data_dir=str(self.data_dir))
+        self.assertIn("슈카월드 쇼츠 최신순", response.text)
+        self.assertIn("short001", response.text)
+        self.assertNotIn("abc123", response.text)
 
     def test_handle_query_search(self) -> None:
         response = slack_bot.handle_query("search 반도체", data_dir=str(self.data_dir))
@@ -436,6 +462,7 @@ class SlackBotTestCase(unittest.TestCase):
                 "video_id": "abc123",
                 "ad_detected": True,
                 "advertiser": "시킹알파",
+                "advertiser_candidates_json": '["시킹알파", "알파브리프", "머니레터"]',
                 "evidence_text": "이 영상은 시킹알파의 유료광고를 포함하고 있습니다.",
                 "description_excerpt": "시킹알파의 유료광고가 포함된 영상입니다.",
                 "confidence": 0.98,
@@ -448,6 +475,29 @@ class SlackBotTestCase(unittest.TestCase):
         response = slack_bot.handle_query("광고찾기 시킹알파", data_dir=str(self.data_dir))
         self.assertIn("광고주 시킹알파", response.text)
         self.assertTrue(any("근거" in block.get("text", {}).get("text", "") for block in response.blocks if block["type"] == "section"))
+        self.assertTrue(any("광고주 후보" in block.get("text", {}).get("text", "") for block in response.blocks if block["type"] == "section"))
+        self.assertTrue(any("2. 알파브리프" in block.get("text", {}).get("text", "") for block in response.blocks if block["type"] == "section"))
+
+    def test_handle_query_ads_matches_secondary_advertiser_candidate(self) -> None:
+        upsert_video_ad_analysis(
+            self.conn,
+            {
+                "video_id": "abc123",
+                "ad_detected": True,
+                "advertiser": "시킹알파",
+                "advertiser_candidates_json": '["시킹알파", "알파브리프", "머니레터"]',
+                "evidence_text": "이 영상은 시킹알파의 유료광고를 포함하고 있습니다.",
+                "description_excerpt": "시킹알파의 유료광고가 포함된 영상입니다.",
+                "confidence": 0.98,
+                "raw_json": '{"ad_detected": true}',
+                "analysis_source": "generated_openai_ad_batch",
+            },
+        )
+        self.conn.commit()
+
+        response = slack_bot.handle_query("광고찾기 알파브리프", data_dir=str(self.data_dir))
+        self.assertIn("abc123", response.text)
+        self.assertIn("광고주 시킹알파", response.text)
 
     def test_handle_query_accepts_simple_natural_language(self) -> None:
         topic = slack_bot.handle_query("반도체 영상 찾아줘", data_dir=str(self.data_dir))

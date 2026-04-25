@@ -127,6 +127,8 @@ def run_incremental_cycle(paths: AppPaths, *, analysis_limit: int, timezone_name
     append_log(paths, "[scheduler] incremental start", timezone_name=timezone_name)
     result = run_subcommand(["--mode", "incremental", "--base-dir", str(paths.base_dir)])
     log_subcommand_result(paths, label="incremental.collect", result=result, timezone_name=timezone_name)
+    result = run_subcommand(["--mode", "incremental-shorts", "--base-dir", str(paths.base_dir), "--skip-thumbnails"])
+    log_subcommand_result(paths, label="incremental.shorts", result=result, timezone_name=timezone_name)
     if os.environ.get("SYUKA_ANALYSIS_API_KEY") or os.environ.get("OPENAI_API_KEY"):
         append_log(paths, "[scheduler] analysis start", timezone_name=timezone_name)
         result = run_subcommand(

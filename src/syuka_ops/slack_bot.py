@@ -19,6 +19,8 @@ from .ad_utils import detect_paid_promotion, has_ad_signal, load_info_json, quer
 from .db import (
     browse_video_count,
     browse_videos,
+    browse_short_video_count,
+    browse_short_videos,
     collection_stats,
     connect,
     get_video,
@@ -84,6 +86,10 @@ CHANNEL_BROWSE_COMMANDS = {
     "moneymoneycomics": ("moneymoneycomics", "머니코믹스"),
     "머니코믹스": ("moneymoneycomics", "머니코믹스"),
     "머코": ("moneymoneycomics", "머니코믹스"),
+}
+SHORTS_BROWSE_COMMANDS = {
+    "월드쇼츠": ("syukaworld", "슈카월드"),
+    "머코쇼츠": ("moneymoneycomics", "머니코믹스"),
 }
 PREFIXED_CHANNEL_COMMANDS = {
     "월드주제": ("search", "syukaworld"),
@@ -1346,6 +1352,28 @@ def ad_search_rows(
     page: int,
     channel_key: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
+    def parse_advertiser_candidates(raw_value: Any) -> list[str]:
+        if not raw_value:
+            return []
+        try:
+            parsed = json.loads(raw_value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for item in parsed:
+            name = str(item or "").strip()
+            if not name:
+                continue
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(name)
+        return candidates[:3]
+
     offset = (page - 1) * limit
     extracted_rows = search_video_ad_rows(conn, query, limit=limit, offset=offset, channel_key=channel_key)
     extracted_total_count = search_video_ad_rows_count(conn, query, channel_key=channel_key)
@@ -1360,6 +1388,7 @@ def ad_search_rows(
                 "thumbnail_url": row["thumbnail_url"],
                 "source_url": row["source_url"],
                 "advertiser": row["advertiser"],
+                "advertiser_candidates": parse_advertiser_candidates(row["advertiser_candidates_json"]),
                 "matched_text": row["evidence_text"] or "",
                 "snippet": row["description_excerpt"] or row["evidence_text"] or "",
                 "match_type": "추출",
@@ -1411,6 +1440,7 @@ def ad_search_rows(
                 "thumbnail_url": row["thumbnail_url"],
                 "source_url": row["source_url"],
                 "advertiser": advertiser,
+                "advertiser_candidates": [advertiser] if advertiser else [],
                 "matched_text": matched_text,
                 "snippet": snippet,
                 "match_type": match_type,
@@ -1439,6 +1469,7 @@ def ad_search_response(
     ]
     for row in rows:
         advertiser = row["advertiser"] or "광고주 미상"
+        advertiser_candidates = [candidate for candidate in row.get("advertiser_candidates", []) if candidate]
         text_lines.append(
             f"- {row['upload_date']} | {row['title']} | `{row['video_id']}` | 광고주 {advertiser}"
         )
@@ -1448,6 +1479,11 @@ def ad_search_response(
             f"조회수 {row_number(row, 'view_count'):,} | 좋아요 {row_number(row, 'like_count'):,}",
             f"*광고주*\n{advertiser}",
         ]
+        if len(advertiser_candidates) > 1:
+            body_lines.append(
+                "*광고주 후보*\n"
+                + "\n".join(f"{index}. {candidate}" for index, candidate in enumerate(advertiser_candidates, start=1))
+            )
         if row.get("matched_text"):
             body_lines.append(f"*근거*\n{row['matched_text']}")
         body_lines.extend(
@@ -1685,7 +1721,7 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
     channel_display_name: str | None = None
     command_name = raw_command
 
-    scoped_command = raw_command in PREFIXED_CHANNEL_COMMANDS or raw_command in CHANNEL_BROWSE_COMMANDS
+    scoped_command = raw_command in PREFIXED_CHANNEL_COMMANDS or raw_command in CHANNEL_BROWSE_COMMANDS or raw_command in SHORTS_BROWSE_COMMANDS
 
     if raw_command in PREFIXED_CHANNEL_COMMANDS:
         command, channel_key = PREFIXED_CHANNEL_COMMANDS[raw_command]
@@ -1693,6 +1729,9 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
     elif raw_command in CHANNEL_BROWSE_COMMANDS:
         channel_key, channel_display_name = CHANNEL_BROWSE_COMMANDS[raw_command]
         command = "channel-browse"
+    elif raw_command in SHORTS_BROWSE_COMMANDS:
+        channel_key, channel_display_name = SHORTS_BROWSE_COMMANDS[raw_command]
+        command = "shorts-browse"
 
     command_aliases = {
         "도움말": "help",
@@ -1753,6 +1792,45 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
                 else:
                     header = channel_display_name or "채널"
                     text_title = f"{channel_display_name or '채널'} {sort_label}"
+                query_parts: list[str] = []
+                if year:
+                    query_parts.append(f"{year}년")
+                if sort == "likes":
+                    query_parts.append("좋아요")
+                elif sort == "views":
+                    query_parts.append("조회수")
+                elif not year:
+                    query_parts.append("최신")
+                command_query = " ".join(query_parts)
+                return browse_response(
+                    rows,
+                    header=header,
+                    text_title=text_title,
+                    command_name=command_name,
+                    command_query=command_query,
+                    limit=limit,
+                    page=page,
+                    total_count=total_count,
+                )
+
+            if command == "shorts-browse":
+                year, sort, limit, page = parse_world_options(argument)
+                total_count = browse_short_video_count(conn, channel_key=channel_key, year=year)
+                rows = browse_short_videos(conn, channel_key=channel_key or "", year=year, sort=sort, limit=limit, offset=(page - 1) * limit)
+                if not rows:
+                    year_label = f"{year}년 " if year else ""
+                    return SlackResponse(text=f"{channel_display_name or '채널'} 쇼츠에서 {year_label}조건에 맞는 영상을 찾지 못했습니다.")
+                sort_label = {
+                    "latest": "최신순",
+                    "likes": "좋아요순",
+                    "views": "조회수순",
+                }.get(sort, "최신순")
+                if year:
+                    header = f"{channel_display_name} 쇼츠 {year}년"
+                    text_title = f"{channel_display_name} 쇼츠 {year}년 {sort_label}"
+                else:
+                    header = f"{channel_display_name} 쇼츠"
+                    text_title = f"{channel_display_name} 쇼츠 {sort_label}"
                 query_parts: list[str] = []
                 if year:
                     query_parts.append(f"{year}년")

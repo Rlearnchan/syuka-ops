@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import glob
@@ -265,6 +265,7 @@ def fetch_video_infos(
     *,
     channel_key: str | None = None,
     channel_name: str | None = None,
+    is_short: bool = False,
     only_last_n: Optional[int] = None,
     date_after: Optional[str] = None,
     use_date_ranges: bool = False,
@@ -273,7 +274,7 @@ def fetch_video_infos(
 ) -> list[dict]:
     resolved_channel = get_channel_by_url(channel_url)
     effective_channel_key = channel_key or (resolved_channel.key if resolved_channel else DEFAULT_CHANNEL_KEY)
-    effective_channel_name = channel_name or (resolved_channel.display_name if resolved_channel else "슈카월드")
+    effective_channel_name = channel_name or (resolved_channel.display_name if resolved_channel else "?덉뭅?붾뱶")
     raw_dir = paths.raw_dir
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_tmpl = str(raw_dir / "%(upload_date>%Y-%m-%d)s__%(id)s__%(title)s")
@@ -339,6 +340,8 @@ def fetch_video_infos(
                 "channel_name": effective_channel_name,
                 "title": meta.get("title", ""),
                 "upload_date": norm_date(meta.get("upload_date", "")),
+                "duration_seconds": int(meta.get("duration") or 0) if meta.get("duration") is not None else None,
+                "is_short": is_short,
                 "view_count": meta.get("view_count", 0),
                 "like_count": meta.get("like_count", 0),
                 "has_ko_sub": subtitle_availability(meta)[0],
@@ -384,7 +387,7 @@ def upsert_videos(conn, rows: Iterable[dict]) -> None:
 def merge_with_existing_video(conn, row: dict) -> dict:
     existing = conn.execute(
         """
-        SELECT channel_key, channel_name, has_ko_sub, has_auto_ko_sub, thumbnail_url, source_url, info_json_path
+        SELECT channel_key, channel_name, duration_seconds, is_short, has_ko_sub, has_auto_ko_sub, thumbnail_url, source_url, info_json_path
         FROM videos
         WHERE video_id = ?
         """,
@@ -395,7 +398,9 @@ def merge_with_existing_video(conn, row: dict) -> dict:
 
     merged = dict(row)
     merged["channel_key"] = row.get("channel_key") or existing["channel_key"] or DEFAULT_CHANNEL_KEY
-    merged["channel_name"] = row.get("channel_name") or existing["channel_name"] or "슈카월드"
+    merged["channel_name"] = row.get("channel_name") or existing["channel_name"] or "?덉뭅?붾뱶"
+    merged["duration_seconds"] = row.get("duration_seconds") or existing["duration_seconds"]
+    merged["is_short"] = bool(row.get("is_short")) or bool(existing["is_short"])
     merged["has_ko_sub"] = bool(row.get("has_ko_sub")) or bool(existing["has_ko_sub"])
     merged["has_auto_ko_sub"] = bool(row.get("has_auto_ko_sub")) or bool(existing["has_auto_ko_sub"])
     merged["thumbnail_url"] = row.get("thumbnail_url") or existing["thumbnail_url"]
@@ -421,8 +426,8 @@ def refresh_videos_from_local_info_json(
     return count
 
 
-def compute_incremental_last_n(conn, *, channel_key: str | None = None) -> int | None:
-    latest_date = latest_video_date(conn, channel_key=channel_key)
+def compute_incremental_last_n(conn, *, channel_key: str | None = None, is_short: bool | None = None) -> int | None:
+    latest_date = latest_video_date(conn, channel_key=channel_key, is_short=is_short)
     if not latest_date:
         return None
     latest = datetime.strptime(latest_date, "%Y-%m-%d").date()
@@ -459,7 +464,7 @@ def video_row_from_info_json(info_path: str, paths: AppPaths | None = None) -> d
         channel = get_channel_by_url(webpage_url)
     if channel is None:
         channel_key = str(uploader_id or DEFAULT_CHANNEL_KEY)
-        channel_name = str(uploader_name or "슈카월드")
+        channel_name = str(uploader_name or "?덉뭅?붾뱶")
     else:
         channel_key = channel.key
         channel_name = channel.display_name
@@ -469,6 +474,8 @@ def video_row_from_info_json(info_path: str, paths: AppPaths | None = None) -> d
         "channel_name": channel_name,
         "title": meta.get("title", ""),
         "upload_date": norm_date(meta.get("upload_date", "")),
+        "duration_seconds": int(meta.get("duration") or 0) if meta.get("duration") is not None else None,
+        "is_short": bool(meta.get("webpage_url_basename") == "shorts" or "/shorts/" in str(meta.get("webpage_url") or "").lower()),
         "view_count": meta.get("view_count", 0),
         "like_count": meta.get("like_count", 0),
         "has_ko_sub": has_manual_ko,
@@ -488,7 +495,7 @@ def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
         existing_transcripts = transcript_video_ids(conn)
         rows = conn.execute(
             f"""
-            SELECT video_id, has_ko_sub, has_auto_ko_sub
+            SELECT video_id, has_ko_sub, has_auto_ko_sub, COALESCE(is_short, 0) AS is_short
             FROM videos
             WHERE video_id IN ({placeholders})
             """,
@@ -499,6 +506,8 @@ def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
         for video_id in requested_ids:
             row = video_rows.get(video_id)
             if not row:
+                continue
+            if row["is_short"]:
                 continue
             if not row["has_ko_sub"] and not row["has_auto_ko_sub"]:
                 continue
@@ -516,7 +525,7 @@ def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
     if options.mode == "retry-failed":
         targets = failed_subtitle_video_ids(conn)
     else:
-        conditions = ["(has_ko_sub = 1 OR has_auto_ko_sub = 1)"]
+        conditions = ["COALESCE(is_short, 0) = 0", "(has_ko_sub = 1 OR has_auto_ko_sub = 1)"]
         params: list[str] = []
         if options.date_from:
             conditions.append("upload_date >= ?")
@@ -1163,8 +1172,25 @@ def selected_channels(options: CollectOptions) -> list[tuple[str, str, str]]:
         channel = get_channel_by_url(options.channel_url)
         if channel:
             return [(channel.key, channel.display_name, channel.url)]
-        return [(DEFAULT_CHANNEL_KEY, "슈카월드", options.channel_url)]
+        return [(DEFAULT_CHANNEL_KEY, "?덉뭅?붾뱶", options.channel_url)]
     return [(channel.key, channel.display_name, channel.url) for channel in channel_configs()]
+
+
+def selected_short_channels(options: CollectOptions) -> list[tuple[str, str, str]]:
+    if options.channel_key:
+        channel = get_channel_config(options.channel_key)
+        return [(channel.key, channel.display_name, channel.shorts_url)]
+    if options.channel_url:
+        channel = get_channel_by_url(options.channel_url)
+        if channel:
+            return [(channel.key, channel.display_name, channel.shorts_url)]
+        fallback = str(options.channel_url).rstrip("/")
+        if fallback.endswith("/videos"):
+            fallback = fallback[:-7] + "/shorts"
+        elif not fallback.endswith("/shorts"):
+            fallback += "/shorts"
+        return [(DEFAULT_CHANNEL_KEY, "슈카월드", fallback)]
+    return [(channel.key, channel.display_name, channel.shorts_url) for channel in channel_configs()]
 
 
 def run_collect(options: CollectOptions) -> None:
@@ -1173,7 +1199,7 @@ def run_collect(options: CollectOptions) -> None:
     conn = connect(paths.db_path)
     init_db(conn)
     try:
-        channels = selected_channels(options)
+        channels = selected_short_channels(options) if options.mode in {"full-shorts", "incremental-shorts"} else selected_channels(options)
         if options.mode == "full":
             videos: list[dict] = []
             for channel_key, channel_name, channel_url in channels:
@@ -1192,7 +1218,7 @@ def run_collect(options: CollectOptions) -> None:
         elif options.mode == "incremental":
             videos: list[dict] = []
             for channel_key, channel_name, channel_url in channels:
-                last_n = compute_incremental_last_n(conn, channel_key=channel_key)
+                last_n = compute_incremental_last_n(conn, channel_key=channel_key, is_short=False)
                 if last_n == 0:
                     continue
                 videos.extend(
@@ -1211,6 +1237,46 @@ def run_collect(options: CollectOptions) -> None:
                 options = replace(options, video_ids=[row["video_id"] for row in videos])
             else:
                 print("Latest metadata is already up to date; skipping incremental metadata refresh.")
+        elif options.mode == "full-shorts":
+            shorts: list[dict] = []
+            for channel_key, channel_name, channel_url in channels:
+                shorts.extend(
+                    fetch_video_infos(
+                        paths,
+                        channel_url=channel_url,
+                        channel_key=channel_key,
+                        channel_name=channel_name,
+                        is_short=True,
+                        use_date_ranges=True,
+                        sleep_requests=options.sleep_requests,
+                        retries=options.retries,
+                    )
+                )
+            upsert_videos(conn, shorts)
+            options = replace(options, skip_transcripts=True)
+        elif options.mode == "incremental-shorts":
+            shorts: list[dict] = []
+            for channel_key, channel_name, channel_url in channels:
+                last_n = compute_incremental_last_n(conn, channel_key=channel_key, is_short=True)
+                if last_n == 0:
+                    continue
+                shorts.extend(
+                    fetch_video_infos(
+                        paths,
+                        channel_url=channel_url,
+                        channel_key=channel_key,
+                        channel_name=channel_name,
+                        is_short=True,
+                        only_last_n=last_n,
+                        sleep_requests=options.sleep_requests,
+                        retries=options.retries,
+                    )
+                )
+            if shorts:
+                upsert_videos(conn, shorts)
+                options = replace(options, video_ids=[row["video_id"] for row in shorts], skip_transcripts=True)
+            else:
+                print("Latest shorts metadata is already up to date; skipping shorts metadata refresh.")
         elif options.mode == "sync-channel-meta":
             for channel_key, _, channel_url in channels:
                 sync_channel_meta(conn, paths, replace(options, channel_key=channel_key, channel_url=channel_url))
@@ -1434,6 +1500,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "full",
             "incremental",
+            "full-shorts",
+            "incremental-shorts",
             "sync-channel-meta",
             "backfill-info-json",
             "refresh-metrics",
@@ -1533,3 +1601,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

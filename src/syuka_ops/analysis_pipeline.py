@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-from .ad_utils import load_info_json
+from .ad_utils import load_info_json, normalize_advertiser_name, should_analyze_ad_description
 from .db import (
     pending_video_ad_analysis_rows,
     pending_video_analysis_rows,
@@ -84,23 +84,27 @@ ANALYSIS_RESULT_JSON_SCHEMA = {
     "required": ["summary", "keywords"],
 }
 
-AD_ANALYSIS_SYSTEM_PROMPT = """?뱀떊? ?좏뒠釉??곸긽 ?ㅻ챸??먯꽌 愿묎퀬 ?먮뒗 ?묒갔 ?щ?瑜?異붿텧?섎뒗 ?꾩슦誘몄엯?덈떎.
-諛섎뱶???꾨옒 JSON ?뺤떇?쇰줈留??묐떟?섏꽭?? ?ㅻⅨ ?ㅻ챸, 肄붾뱶釉붾줉, 二쇱꽍? 湲덉??⑸땲??
+AD_ANALYSIS_SYSTEM_PROMPT = """당신은 유튜브 영상 설명란에서 광고 또는 협찬 여부를 추출하는 도우미입니다.
+반드시 아래 JSON 형식으로만 응답하세요. 다른 설명, 코드블록, 주석은 금지합니다.
 
-?묐떟 ?뺤떇:
+응답 형식:
 {
   "ad_detected": true,
-  "advertiser": "釉뚮옖???먮뒗 愿묎퀬二??대쫫",
-  "evidence_text": "?ㅻ챸??먯꽌 愿묎퀬/?묒갔?쇰줈 ?먮떒???듭떖 臾몄옣",
-  "description_excerpt": "?ㅻ챸??먯꽌 愿??遺遺꾨쭔 吏㏐쾶 諛쒖톸",
+  "advertiser": "가장 가능성이 높은 광고주 이름",
+  "advertiser_candidates": ["후보1", "후보2", "후보3"],
+  "evidence_text": "설명란에서 광고/협찬으로 판단한 핵심 문장",
+  "description_excerpt": "설명란에서 관련 부분만 짧게 발췌",
   "confidence": 0.0
 }
 
-洹쒖튃:
-- 愿묎퀬/?묒갔???녿떎怨??먮떒?섎㈃ ad_detected??false
-- 愿묎퀬二쇰? ?뱀젙?????놁쑝硫?advertiser??鍮?臾몄옄??- evidence_text? description_excerpt??1~2臾몄옣 ?대궡
-- confidence??0.0~1.0
-- 諛섎뱶???좏슚??JSON留?異쒕젰
+규칙:
+- 광고/협찬이 없다고 판단하면 ad_detected는 false
+- advertiser_candidates는 가능성 높은 순서대로 최대 3개
+- advertiser는 advertiser_candidates의 첫 번째 값과 같게 맞추기
+- 광고주를 특정할 수 없으면 advertiser는 빈 문자열, advertiser_candidates는 빈 배열
+- evidence_text와 description_excerpt는 1~2문장 이내
+- confidence는 0.0~1.0
+- 반드시 유효한 JSON만 출력
 """
 
 AD_ANALYSIS_RESULT_JSON_SCHEMA = {
@@ -109,11 +113,15 @@ AD_ANALYSIS_RESULT_JSON_SCHEMA = {
     "properties": {
         "ad_detected": {"type": "boolean"},
         "advertiser": {"type": "string"},
+        "advertiser_candidates": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
         "evidence_text": {"type": "string"},
         "description_excerpt": {"type": "string"},
         "confidence": {"type": "number"},
     },
-    "required": ["ad_detected", "advertiser", "evidence_text", "description_excerpt", "confidence"],
+    "required": ["ad_detected", "advertiser", "advertiser_candidates", "evidence_text", "description_excerpt", "confidence"],
 }
 
 
@@ -155,6 +163,51 @@ def build_combined_analysis_prompt(title: str, date: str, dialogue: str, max_cha
 def build_ad_analysis_prompt(title: str, date: str, description: str, max_chars: int = 12000) -> str:
     doc = _trim_dialogue(description, max_chars)
     return f"[제목] {title}\n[게시일] {date}\n[설명란]\n{doc}"
+
+
+def _normalize_advertiser_candidates(raw_candidates: list[Any], advertiser: str) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(value: Any) -> None:
+        normalized = normalize_advertiser_name(str(value or ""))
+        if not normalized:
+            return
+        key = normalized.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(normalized)
+
+    add_candidate(advertiser)
+    for candidate in raw_candidates:
+        add_candidate(candidate)
+    return candidates[:3]
+
+
+def _prepare_ad_analysis_targets(rows: list[Any]) -> dict[str, Any]:
+    targets: list[dict[str, Any]] = []
+    filtered_rows = 0
+    missing_description_rows = 0
+
+    for row in rows:
+        info = load_info_json(row["info_json_path"])
+        description = str(info.get("description") or "").strip()
+        if not description:
+            missing_description_rows += 1
+            continue
+        if not should_analyze_ad_description(row["title"] or "", description):
+            filtered_rows += 1
+            continue
+        target = dict(row)
+        target["description"] = description
+        targets.append(target)
+
+    return {
+        "targets": targets,
+        "filtered_rows": filtered_rows,
+        "missing_description_rows": missing_description_rows,
+    }
 
 def check_ollama(config: AnalysisConfig) -> dict[str, Any]:
     response = requests.get(f"{config.base_url}/api/tags", timeout=10)
@@ -411,7 +464,10 @@ def _parse_ad_analysis_result_response(content: str) -> dict[str, Any]:
         cleaned = cleaned.replace("```json", "").replace("```", "").strip()
 
     parsed = json.loads(cleaned)
-    advertiser = str(parsed.get("advertiser") or "").strip()
+    advertiser = normalize_advertiser_name(str(parsed.get("advertiser") or ""))
+    advertiser_candidates = _normalize_advertiser_candidates(parsed.get("advertiser_candidates") or [], advertiser)
+    if advertiser_candidates:
+        advertiser = advertiser_candidates[0]
     evidence_text = str(parsed.get("evidence_text") or "").strip()
     description_excerpt = str(parsed.get("description_excerpt") or "").strip()
     try:
@@ -422,6 +478,7 @@ def _parse_ad_analysis_result_response(content: str) -> dict[str, Any]:
     return {
         "ad_detected": bool(parsed.get("ad_detected")),
         "advertiser": advertiser,
+        "advertiser_candidates": advertiser_candidates,
         "evidence_text": evidence_text,
         "description_excerpt": description_excerpt,
         "confidence": confidence,
@@ -431,8 +488,7 @@ def _parse_ad_analysis_result_response(content: str) -> dict[str, Any]:
 def build_openai_ad_batch_requests(rows: list[Any], *, config: AnalysisConfig) -> list[dict[str, Any]]:
     payload_rows: list[dict[str, Any]] = []
     for row in rows:
-        info = load_info_json(row["info_json_path"])
-        description = str(info.get("description") or "").strip()
+        description = str(row.get("description") or "").strip()
         if not description:
             continue
         payload_rows.append(
@@ -814,16 +870,15 @@ def prepare_openai_batch_ad_analysis(
         date_to=date_to,
         oldest_first=oldest_first,
     )
-    target = write_openai_ad_batch_input(rows, config=config, output_path=output_path)
-    prepared_rows = 0
-    try:
-        with target.open("r", encoding="utf-8") as handle:
-            prepared_rows = sum(1 for _ in handle)
-    except OSError:
-        prepared_rows = 0
+    screening = _prepare_ad_analysis_targets(rows)
+    targets = screening["targets"]
+    target = write_openai_ad_batch_input(targets, config=config, output_path=output_path)
+    prepared_rows = len(targets)
     return {
         "prepared_rows": prepared_rows,
         "candidate_rows": len(rows),
+        "filtered_rows": screening["filtered_rows"],
+        "missing_description_rows": screening["missing_description_rows"],
         "output_path": str(target),
         "model": config.model,
     }
@@ -884,6 +939,7 @@ def apply_openai_ad_batch_output(
                 "video_id": video_id,
                 "ad_detected": parsed["ad_detected"],
                 "advertiser": parsed["advertiser"],
+                "advertiser_candidates_json": json.dumps(parsed["advertiser_candidates"], ensure_ascii=False),
                 "evidence_text": parsed["evidence_text"],
                 "description_excerpt": parsed["description_excerpt"],
                 "confidence": parsed["confidence"],
@@ -949,19 +1005,15 @@ def sync_generated_ad_analysis(
 
     processed = 0
     failed_rows: list[str] = []
-    skipped_rows = 0
-    for row in rows:
-        info = load_info_json(row["info_json_path"])
-        description = str(info.get("description") or "").strip()
-        if not description:
-            skipped_rows += 1
-            continue
+    screening = _prepare_ad_analysis_targets(rows)
+    skipped_rows = screening["filtered_rows"] + screening["missing_description_rows"]
+    for row in screening["targets"]:
         try:
             parsed = generate_video_ad_analysis(
                 config,
                 title=row["title"] or "",
                 upload_date=row["upload_date"] or "",
-                description=description,
+                description=row["description"] or "",
             )
         except Exception:
             failed_rows.append(row["video_id"])
@@ -973,6 +1025,7 @@ def sync_generated_ad_analysis(
                 "video_id": row["video_id"],
                 "ad_detected": parsed["ad_detected"],
                 "advertiser": parsed["advertiser"],
+                "advertiser_candidates_json": json.dumps(parsed["advertiser_candidates"], ensure_ascii=False),
                 "evidence_text": parsed["evidence_text"],
                 "description_excerpt": parsed["description_excerpt"],
                 "confidence": parsed["confidence"],

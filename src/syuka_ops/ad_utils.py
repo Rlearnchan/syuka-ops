@@ -100,6 +100,42 @@ def has_ad_signal(text: str) -> bool:
     return any(keyword.lower() in lower for keyword in AD_SIGNAL_KEYWORDS)
 
 
+def ad_signal_score(title: str, description: str) -> int:
+    title_text = (title or "").strip()
+    description_text = (description or "").strip()
+    if not title_text and not description_text:
+        return 0
+
+    combined = "\n".join(part for part in [title_text, description_text] if part).lower()
+    score = 0
+
+    if detect_paid_promotion(description_text):
+        score += 5
+
+    if has_ad_signal(description_text):
+        score += 2
+    elif has_ad_signal(title_text):
+        score += 1
+
+    url_hits = len(re.findall(r"https?://|www\.", description_text, flags=re.IGNORECASE))
+    if url_hits >= 1:
+        score += 1
+    if url_hits >= 3:
+        score += 1
+
+    cta_hits = sum(
+        1
+        for keyword in ["링크", "가입", "할인", "쿠폰", "프로모션", "이벤트", "download", "install", "app"]
+        if keyword.lower() in combined
+    )
+    score += min(cta_hits, 2)
+    return score
+
+
+def should_analyze_ad_description(title: str, description: str, *, min_score: int = 2) -> bool:
+    return ad_signal_score(title, description) >= min_score
+
+
 def detect_paid_promotion(description: str) -> dict[str, str] | None:
     text = (description or "").strip()
     if not text:
