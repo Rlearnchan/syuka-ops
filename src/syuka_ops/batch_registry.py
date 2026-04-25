@@ -5,7 +5,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .analysis_pipeline import AnalysisConfig, apply_openai_batch_output, fetch_openai_batch
+from .analysis_pipeline import (
+    AnalysisConfig,
+    apply_openai_ad_batch_output,
+    apply_openai_batch_output,
+    fetch_openai_batch,
+)
 from .config import AppPaths
 
 
@@ -74,12 +79,13 @@ def register_submitted_batch(
     return entry
 
 
-def sync_registered_analysis_batches(
+def sync_registered_batches(
     conn,
     *,
     paths: AppPaths,
     config: AnalysisConfig,
     limit: int = 0,
+    kinds: tuple[str, ...] = ("analysis",),
 ) -> dict[str, Any]:
     rows = load_registry(paths)
     checked_batches = 0
@@ -90,7 +96,7 @@ def sync_registered_analysis_batches(
     now = datetime.now().isoformat(timespec="seconds")
 
     for row in rows:
-        if row.get("kind") != "analysis":
+        if row.get("kind") not in kinds:
             continue
         if row.get("applied_at"):
             continue
@@ -116,12 +122,20 @@ def sync_registered_analysis_batches(
         if status == "completed" and row.get("output_file_id"):
             row["completed_at"] = datetime.now().isoformat(timespec="seconds")
             try:
-                result = apply_openai_batch_output(
-                    conn,
-                    config=config,
-                    file_id=str(row["output_file_id"]),
-                    analysis_source=str(row.get("analysis_source") or "generated_openai_batch"),
-                )
+                if row.get("kind") == "ad_analysis":
+                    result = apply_openai_ad_batch_output(
+                        conn,
+                        config=config,
+                        file_id=str(row["output_file_id"]),
+                        analysis_source=str(row.get("analysis_source") or "generated_openai_ad_batch"),
+                    )
+                else:
+                    result = apply_openai_batch_output(
+                        conn,
+                        config=config,
+                        file_id=str(row["output_file_id"]),
+                        analysis_source=str(row.get("analysis_source") or "generated_openai_batch"),
+                    )
             except Exception as exc:
                 row["last_error"] = str(exc)
                 continue
@@ -146,3 +160,19 @@ def sync_registered_analysis_batches(
         "applied_batches": applied_batches,
         "applied_rows": applied_rows,
     }
+
+
+def sync_registered_analysis_batches(
+    conn,
+    *,
+    paths: AppPaths,
+    config: AnalysisConfig,
+    limit: int = 0,
+) -> dict[str, Any]:
+    return sync_registered_batches(
+        conn,
+        paths=paths,
+        config=config,
+        limit=limit,
+        kinds=("analysis",),
+    )

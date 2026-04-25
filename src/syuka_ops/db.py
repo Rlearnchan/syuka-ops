@@ -59,6 +59,20 @@ def init_db(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(video_id) REFERENCES videos(video_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS video_ad_analysis (
+            video_id TEXT PRIMARY KEY,
+            ad_detected INTEGER NOT NULL DEFAULT 0,
+            advertiser TEXT,
+            evidence_text TEXT,
+            description_excerpt TEXT,
+            confidence REAL,
+            raw_json TEXT,
+            analysis_source TEXT NOT NULL DEFAULT 'heuristic_description',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(video_id) REFERENCES videos(video_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS download_attempts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             video_id TEXT NOT NULL,
@@ -94,6 +108,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_has_ko_sub ON videos(has_ko_sub, upload_date DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_has_auto_ko_sub ON videos(has_auto_ko_sub, upload_date DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_analysis_source ON video_analysis(analysis_source, updated_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_video_ad_analysis_source ON video_ad_analysis(analysis_source, updated_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_video_ad_analysis_advertiser ON video_ad_analysis(advertiser, updated_at DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_video_stage ON download_attempts(video_id, stage, created_at DESC)")
 
     conn.commit()
@@ -175,6 +191,37 @@ def upsert_video_analysis(conn: sqlite3.Connection, row: dict) -> None:
             row.get("summary"),
             row.get("keywords_json"),
             row.get("analysis_source", "legacy_script"),
+        ),
+    )
+
+
+def upsert_video_ad_analysis(conn: sqlite3.Connection, row: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO video_ad_analysis (
+            video_id, ad_detected, advertiser, evidence_text, description_excerpt,
+            confidence, raw_json, analysis_source
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(video_id) DO UPDATE SET
+            ad_detected=excluded.ad_detected,
+            advertiser=excluded.advertiser,
+            evidence_text=excluded.evidence_text,
+            description_excerpt=excluded.description_excerpt,
+            confidence=excluded.confidence,
+            raw_json=excluded.raw_json,
+            analysis_source=excluded.analysis_source,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (
+            row["video_id"],
+            int(bool(row.get("ad_detected"))),
+            row.get("advertiser"),
+            row.get("evidence_text"),
+            row.get("description_excerpt"),
+            row.get("confidence"),
+            row.get("raw_json"),
+            row.get("analysis_source", "heuristic_description"),
         ),
     )
 
@@ -340,11 +387,24 @@ def search_videos(
 ) -> list[sqlite3.Row]:
     like = f"%{query}%"
     compact_like = f"%{normalized_search_query(query)}%"
-    params: list[object] = []
+    params: list[object] = [
+        compact_like,
+        like,
+        compact_like,
+        compact_like,
+        compact_like,
+        compact_like,
+        compact_like,
+        compact_like,
+        compact_like,
+        like,
+    ]
     channel_clause = ""
     if channel_key:
         channel_clause = "v.channel_key = ? AND ("
-        params.append(channel_key)
+    where_params: list[object] = []
+    if channel_key:
+        where_params.append(channel_key)
     return conn.execute(
         f"""
         SELECT DISTINCT
@@ -394,25 +454,7 @@ def search_videos(
         LIMIT ?
         OFFSET ?
         """,
-        params + [
-            compact_like,
-            like,
-            compact_like,
-            compact_like,
-            compact_like,
-            compact_like,
-            compact_like,
-            compact_like,
-            compact_like,
-            like,
-            compact_like,
-            like,
-            compact_like,
-            compact_like,
-            compact_like,
-            limit,
-            offset,
-        ],
+        params + where_params + [compact_like, like, compact_like, compact_like, compact_like, limit, offset],
     ).fetchall()
 
 
@@ -566,6 +608,86 @@ def video_rows_with_info_json(
     return conn.execute(sql, params).fetchall()
 
 
+def search_video_ad_rows(
+    conn: sqlite3.Connection, query: str, limit: int = 5, offset: int = 0, *, channel_key: str | None = None
+) -> list[sqlite3.Row]:
+    like = f"%{query}%"
+    compact_like = f"%{normalized_search_query(query)}%"
+    params: list[object] = []
+    clauses = ["va.ad_detected = 1"]
+    if channel_key:
+        clauses.append("v.channel_key = ?")
+        params.append(channel_key)
+    clauses.append(
+        "("
+        "REPLACE(COALESCE(va.advertiser, ''), ' ', '') LIKE ? "
+        "OR REPLACE(COALESCE(va.evidence_text, ''), ' ', '') LIKE ? "
+        "OR REPLACE(COALESCE(va.description_excerpt, ''), ' ', '') LIKE ? "
+        "OR REPLACE(COALESCE(v.title, ''), ' ', '') LIKE ? "
+        "OR COALESCE(va.raw_json, '') LIKE ?"
+        ")"
+    )
+    params.extend([compact_like, compact_like, compact_like, compact_like, like, limit, offset])
+    return conn.execute(
+        f"""
+        SELECT
+            v.video_id,
+            v.channel_key,
+            v.channel_name,
+            v.title,
+            v.upload_date,
+            v.view_count,
+            v.like_count,
+            v.thumbnail_url,
+            v.source_url,
+            va.ad_detected,
+            va.advertiser,
+            va.evidence_text,
+            va.description_excerpt,
+            va.confidence,
+            va.raw_json,
+            va.analysis_source
+        FROM video_ad_analysis va
+        JOIN videos v ON v.video_id = va.video_id
+        WHERE {' AND '.join(clauses)}
+        ORDER BY COALESCE(va.confidence, 0) DESC, v.upload_date DESC
+        LIMIT ?
+        OFFSET ?
+        """,
+        params,
+    ).fetchall()
+
+
+def search_video_ad_rows_count(conn: sqlite3.Connection, query: str, *, channel_key: str | None = None) -> int:
+    like = f"%{query}%"
+    compact_like = f"%{normalized_search_query(query)}%"
+    params: list[object] = []
+    clauses = ["va.ad_detected = 1"]
+    if channel_key:
+        clauses.append("v.channel_key = ?")
+        params.append(channel_key)
+    clauses.append(
+        "("
+        "REPLACE(COALESCE(va.advertiser, ''), ' ', '') LIKE ? "
+        "OR REPLACE(COALESCE(va.evidence_text, ''), ' ', '') LIKE ? "
+        "OR REPLACE(COALESCE(va.description_excerpt, ''), ' ', '') LIKE ? "
+        "OR REPLACE(COALESCE(v.title, ''), ' ', '') LIKE ? "
+        "OR COALESCE(va.raw_json, '') LIKE ?"
+        ")"
+    )
+    params.extend([compact_like, compact_like, compact_like, compact_like, like])
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS c
+        FROM video_ad_analysis va
+        JOIN videos v ON v.video_id = va.video_id
+        WHERE {' AND '.join(clauses)}
+        """,
+        params,
+    ).fetchone()
+    return int(row["c"] or 0)
+
+
 def collection_stats(conn: sqlite3.Connection) -> sqlite3.Row:
     return conn.execute(
         """
@@ -656,6 +778,66 @@ def pending_video_analysis_rows(
         FROM transcripts t
         JOIN videos v ON v.video_id = t.video_id
         LEFT JOIN video_analysis a ON a.video_id = v.video_id
+        WHERE {' AND '.join(clauses)}
+        ORDER BY v.upload_date {order}, v.video_id ASC
+    """
+    if limit and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    return conn.execute(sql, params).fetchall()
+
+
+def pending_video_ad_analysis_rows(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 0,
+    overwrite: bool = False,
+    video_ids: Iterable[str] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    oldest_first: bool = False,
+) -> list[sqlite3.Row]:
+    clauses = [
+        "v.info_json_path IS NOT NULL",
+        "TRIM(v.info_json_path) != ''",
+    ]
+    params: list[object] = []
+
+    if not overwrite:
+        clauses.append("va.video_id IS NULL")
+
+    if video_ids:
+        ids = [video_id for video_id in video_ids if video_id]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            clauses.append(f"v.video_id IN ({placeholders})")
+            params.extend(ids)
+
+    if date_from:
+        clauses.append("COALESCE(v.upload_date, '') >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("COALESCE(v.upload_date, '') <= ?")
+        params.append(date_to)
+
+    order = "ASC" if oldest_first else "DESC"
+    sql = f"""
+        SELECT
+            v.video_id,
+            v.channel_key,
+            v.channel_name,
+            v.title,
+            v.upload_date,
+            v.view_count,
+            v.like_count,
+            v.source_url,
+            v.info_json_path,
+            va.ad_detected AS existing_ad_detected,
+            va.advertiser AS existing_advertiser,
+            va.analysis_source AS existing_analysis_source
+        FROM videos v
+        LEFT JOIN video_ad_analysis va ON va.video_id = v.video_id
         WHERE {' AND '.join(clauses)}
         ORDER BY v.upload_date {order}, v.video_id ASC
     """

@@ -39,17 +39,25 @@ AD_SIGNAL_KEYWORDS = [
 def load_info_json(info_json_path: str | None) -> dict[str, Any]:
     if not info_json_path:
         return {}
-    base_dir = os.environ.get("SYUKA_DATA_DIR", "./data")
-    app_paths = AppPaths.from_base_dir(base_dir)
-    path = resolve_stored_path(info_json_path, base_dir=app_paths.base_dir, search_dirs=[app_paths.raw_dir])
-    if path is None:
-        path = Path(info_json_path)
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    candidate_base_dirs: list[str] = []
+    env_base_dir = os.environ.get("SYUKA_DATA_DIR")
+    if env_base_dir:
+        candidate_base_dirs.append(env_base_dir)
+    if "./data" not in candidate_base_dirs:
+        candidate_base_dirs.append("./data")
+
+    for base_dir in candidate_base_dirs:
+        app_paths = AppPaths.from_base_dir(base_dir)
+        path = resolve_stored_path(info_json_path, base_dir=app_paths.base_dir, search_dirs=[app_paths.raw_dir])
+        if path is None:
+            path = Path(info_json_path)
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}
 
 
 def normalize_advertiser_name(name: str) -> str:

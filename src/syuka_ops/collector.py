@@ -21,13 +21,16 @@ from tqdm import tqdm
 
 from .analysis_pipeline import (
     AnalysisConfig,
+    apply_openai_ad_batch_output,
     apply_openai_batch_output,
     fetch_openai_batch,
+    prepare_openai_batch_ad_analysis,
     prepare_openai_batch_analysis,
     submit_openai_batch_analysis,
+    sync_generated_ad_analysis,
     sync_generated_analysis,
 )
-from .batch_registry import register_submitted_batch, sync_registered_analysis_batches
+from .batch_registry import register_submitted_batch, sync_registered_analysis_batches, sync_registered_batches
 from .config import (
     DEFAULT_CHANNEL_KEY,
     AppPaths,
@@ -1249,11 +1252,51 @@ def run_collect(options: CollectOptions) -> None:
             )
             print(result)
             return
+        elif options.mode == "generate-ad-analysis":
+            result = sync_generated_ad_analysis(
+                conn,
+                config=AnalysisConfig(
+                    provider=options.analysis_provider,
+                    model=options.analysis_model,
+                    base_url=options.analysis_base_url,
+                    api_key=options.analysis_api_key,
+                ),
+                limit=options.analysis_limit,
+                overwrite=options.analysis_overwrite,
+                video_ids=options.video_ids,
+                date_from=options.date_from,
+                date_to=options.date_to,
+                oldest_first=options.oldest_first,
+            )
+            print(result)
+            return
         elif options.mode == "prepare-analysis-batch":
             batch_path = options.analysis_batch_path or str(
                 paths.batches_dir / f"analysis_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             )
             result = prepare_openai_batch_analysis(
+                conn,
+                config=AnalysisConfig(
+                    provider="openai",
+                    model=options.analysis_model,
+                    base_url=options.analysis_base_url,
+                    api_key=options.analysis_api_key,
+                ),
+                output_path=batch_path,
+                limit=options.analysis_limit,
+                overwrite=options.analysis_overwrite,
+                video_ids=options.video_ids,
+                date_from=options.date_from,
+                date_to=options.date_to,
+                oldest_first=options.oldest_first,
+            )
+            print(result)
+            return
+        elif options.mode == "prepare-ad-batch":
+            batch_path = options.analysis_batch_path or str(
+                paths.batches_dir / f"ad_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            )
+            result = prepare_openai_batch_ad_analysis(
                 conn,
                 config=AnalysisConfig(
                     provider="openai",
@@ -1287,6 +1330,31 @@ def run_collect(options: CollectOptions) -> None:
             register_submitted_batch(paths, result)
             print(result)
             return
+        elif options.mode == "submit-ad-batch":
+            batch_path = options.analysis_batch_path
+            if not batch_path:
+                raise RuntimeError("--analysis-batch-path is required.")
+            result = submit_openai_batch_analysis(
+                config=AnalysisConfig(
+                    provider="openai",
+                    model=options.analysis_model,
+                    base_url=options.analysis_base_url,
+                    api_key=options.analysis_api_key,
+                ),
+                input_path=batch_path,
+                metadata={
+                    "source": "syuka_ops_ad_analysis",
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+            register_submitted_batch(
+                paths,
+                result,
+                kind="ad_analysis",
+                analysis_source="generated_openai_ad_batch",
+            )
+            print(result)
+            return
         elif options.mode == "check-analysis-batch":
             if not options.analysis_batch_id:
                 raise RuntimeError("--analysis-batch-id is required.")
@@ -1302,7 +1370,7 @@ def run_collect(options: CollectOptions) -> None:
             print(result)
             return
         elif options.mode == "sync-analysis-batches":
-            result = sync_registered_analysis_batches(
+            result = sync_registered_batches(
                 conn,
                 paths=paths,
                 config=AnalysisConfig(
@@ -1311,11 +1379,27 @@ def run_collect(options: CollectOptions) -> None:
                     base_url=options.analysis_base_url,
                     api_key=options.analysis_api_key,
                 ),
+                kinds=("analysis", "ad_analysis"),
             )
             print(result)
             return
         elif options.mode == "apply-analysis-batch":
             result = apply_openai_batch_output(
+                conn,
+                config=AnalysisConfig(
+                    provider="openai",
+                    model=options.analysis_model,
+                    base_url=options.analysis_base_url,
+                    api_key=options.analysis_api_key,
+                ),
+                output_path=options.analysis_batch_path,
+                batch_id=options.analysis_batch_id,
+                file_id=options.analysis_batch_output_file_id,
+            )
+            print(result)
+            return
+        elif options.mode == "apply-ad-batch":
+            result = apply_openai_ad_batch_output(
                 conn,
                 config=AnalysisConfig(
                     provider="openai",
@@ -1358,11 +1442,15 @@ def build_parser() -> argparse.ArgumentParser:
             "retry-failed",
             "sync-legacy-analysis",
             "generate-analysis",
+            "generate-ad-analysis",
             "prepare-analysis-batch",
+            "prepare-ad-batch",
             "submit-analysis-batch",
+            "submit-ad-batch",
             "check-analysis-batch",
             "sync-analysis-batches",
             "apply-analysis-batch",
+            "apply-ad-batch",
         ],
         default="incremental",
     )

@@ -142,6 +142,20 @@ def run_incremental_cycle(paths: AppPaths, *, analysis_limit: int, timezone_name
             ]
         )
         log_subcommand_result(paths, label="incremental.analysis", result=result, timezone_name=timezone_name)
+        append_log(paths, "[scheduler] ad-analysis start", timezone_name=timezone_name)
+        result = run_subcommand(
+            [
+                "--mode",
+                "generate-ad-analysis",
+                "--base-dir",
+                str(paths.base_dir),
+                "--analysis-provider",
+                "openai",
+                "--analysis-limit",
+                str(analysis_limit),
+            ]
+        )
+        log_subcommand_result(paths, label="incremental.ad-analysis", result=result, timezone_name=timezone_name)
     result = run_subcommand(["--mode", "sync-analysis-batches", "--base-dir", str(paths.base_dir)])
     log_subcommand_result(paths, label="incremental.batch-sync", result=result, timezone_name=timezone_name)
     append_log(paths, "[scheduler] incremental finish", timezone_name=timezone_name)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -101,6 +102,12 @@ def _normalized_basename(path_value: str | Path | None) -> str:
     return text.rsplit("/", 1)[-1]
 
 
+def _video_id_from_stored_path(path_value: str | Path | None) -> str:
+    basename = _normalized_basename(path_value)
+    match = re.search(r"__([A-Za-z0-9_-]{6,})__", basename)
+    return match.group(1) if match else ""
+
+
 def portable_data_path(path_value: str | Path | None, *, base_dir: str | Path | None) -> str | None:
     if not path_value:
         return None
@@ -156,5 +163,16 @@ def resolve_stored_path(
             remapped = Path(directory).resolve() / basename
             if remapped.exists():
                 return remapped
+        video_id = _video_id_from_stored_path(raw_text)
+        if video_id:
+            for directory in search_dirs:
+                root = Path(directory).resolve()
+                try:
+                    candidates = list(root.rglob(f"*{video_id}*"))
+                except OSError:
+                    candidates = []
+                for candidate_path in candidates:
+                    if candidate_path.is_file():
+                        return candidate_path
 
     return None

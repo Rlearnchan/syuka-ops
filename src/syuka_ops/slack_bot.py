@@ -25,8 +25,10 @@ from .db import (
     init_db,
     recent_attempts,
     recent_videos,
-    search_videos_count,
+    search_video_ad_rows,
+    search_video_ad_rows_count,
     search_videos,
+    search_videos_count,
     transcript_snippets,
     transcript_snippets_count,
     video_rows_with_info_json,
@@ -425,31 +427,31 @@ def help_text() -> str:
             "- 멘션: `@슈카창고 help`",
             "- 멘션으로 부르면 보통 해당 대화에 댓글처럼 답변합니다.",
             "",
-            "처음 쓰는 분께 추천:",
+            "바로 써보기:",
             "`/syuka 슈카월드`",
-            "`/syuka 월드주제 반도체`",
-            "`/syuka 머코주제 금리`",
-            "`/syuka 월드언급 관세`",
-            "`/syuka 머코썸넬 반도체`",
-            "`/syuka 썸네일 반도체`",
+            "`/syuka 머니코믹스`",
+            "`/syuka 월드주제 AI`",
+            '`/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`',
+            "`/syuka 머코주제 트럼프`",
+            '`/syuka 머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"`',
+            "`/syuka 머코광고 시킹알파`",
             "",
             "자주 쓰는 방법:",
             "- 최근 영상 훑기: `/syuka 슈카월드`",
-            "- 슈카월드 주제 찾기: `/syuka 월드주제 반도체`",
-            "- 머니코믹스 주제 찾기: `/syuka 머코주제 금리`",
-            "- 자막에서 실제 언급 찾기: `/syuka 월드언급 관세`",
-            "- 광고 사례 찾기: `/syuka 머코광고 삼성`",
-            "- 썸네일 크게 보기: `/syuka 머코썸넬 반도체` 또는 `/syuka 썸네일 abc123`",
-            "- 기존 범용 명령도 그대로 가능: `/syuka 주제찾기 반도체`, `/syuka 썸네일 반도체`",
+            "- 머니코믹스 최근 보기: `/syuka 머니코믹스`",
+            "- 슈카월드 주제 찾기: `/syuka 월드주제 AI`",
+            '- 자막에서 실제 발언 찾기: `/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`',
+            '- 머니코믹스 발언 찾기: `/syuka 머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"`',
+            "- 광고 사례 찾기: `/syuka 머코광고 시킹알파`",
+            "- 썸네일 크게 보기: `/syuka 머코썸넬 트럼프` 또는 `/syuka 썸네일 abc123`",
             "- 수집 상태 보기: `/syuka collect-status`",
             "",
             "명령어 목록:",
             "- `help`: 이 안내 보기",
             "- `슈카월드` / `머니코믹스`: 채널별 최근 업로드 브라우징",
-            "- `recent [개수] [페이지]` / `latest` / `최신이슈`: 예전 방식의 최근 영상 보기",
-            "- `search <키워드>` / `topic <키워드>` / `주제찾기 <키워드>`: 제목+자막 통합 검색",
-            "- `transcript <키워드>` / `mention <키워드>` / `언급찾기 <키워드>`: 자막 본문 검색",
-            "- `ads <업체명 또는 키워드>` / `광고찾기 <업체명>`: 광고 사례 검색",
+            "- `월드주제` / `머코주제`: 제목과 분석 키워드 기준 검색",
+            "- `월드언급` / `머코언급`: 자막 문장과 대목 검색",
+            "- `월드광고` / `머코광고`: 설명란 기준 광고 사례 검색",
             "- `월드주제/월드언급/월드광고/월드썸넬`: 슈카월드 전용 바로가기",
             "- `머코주제/머코언급/머코광고/머코썸넬`: 머니코믹스 전용 바로가기",
             "- `video <video_id>`: 특정 영상 상세 보기",
@@ -461,13 +463,14 @@ def help_text() -> str:
             "예시:",
             "`/syuka 슈카월드`",
             "`/syuka 머니코믹스`",
-            "`/syuka search 반도체`",
-            "`/syuka 월드주제 반도체`",
-            "`/syuka 머코언급 금리`",
-            '`/syuka search "AI 반도체" --limit 3 --page 2`',
+            "`/syuka 월드주제 AI`",
+            '`/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`',
+            "`/syuka 머코주제 트럼프`",
+            '`/syuka 머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"`',
+            "`/syuka 머코광고 시킹알파`",
             "`/syuka video abc123`",
             "`/syuka 전문 abc123`",
-            "`/syuka transcript 관세 --limit 3`",
+            '`/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`',
             "`/syuka thumbnail abc123`",
             "`/syuka collect-status`",
         ]
@@ -485,10 +488,20 @@ def friendly_error_response() -> SlackResponse:
 
 
 def no_results_response(query: str, *, kind: str, channel_label: str | None = None) -> SlackResponse:
-    browse_hint = f"/syuka {channel_label} 최신 5" if channel_label else "/syuka 슈카월드 최신 5"
-    search_hint = f"/syuka {channel_label}주제 <키워드>" if channel_label and channel_label in {"월드", "머코"} else "/syuka 주제찾기 <키워드>"
-    transcript_hint = f"/syuka {channel_label}언급 <키워드>" if channel_label and channel_label in {"월드", "머코"} else "/syuka 언급찾기 <키워드>"
-    thumbnail_hint = f"/syuka {channel_label}썸넬 <video_id>" if channel_label and channel_label in {"월드", "머코"} else "/syuka 썸네일 <video_id>"
+    browse_hint = "/syuka 슈카월드"
+    search_hint = "/syuka 월드주제 <키워드>"
+    transcript_hint = "/syuka 월드언급 <문장 또는 표현>"
+    thumbnail_hint = "/syuka 월드썸넬 <video_id 또는 키워드>"
+    if channel_label == "머코":
+        browse_hint = "/syuka 머니코믹스"
+        search_hint = "/syuka 머코주제 <키워드>"
+        transcript_hint = "/syuka 머코언급 <문장 또는 표현>"
+        thumbnail_hint = "/syuka 머코썸넬 <video_id 또는 키워드>"
+    elif channel_label == "월드":
+        browse_hint = "/syuka 슈카월드"
+        search_hint = "/syuka 월드주제 <키워드>"
+        transcript_hint = "/syuka 월드언급 <문장 또는 표현>"
+        thumbnail_hint = "/syuka 월드썸넬 <video_id 또는 키워드>"
     hints = {
         "search": (
             f"`{query}` 관련 영상을 찾지 못했습니다.\n"
@@ -500,9 +513,9 @@ def no_results_response(query: str, *, kind: str, channel_label: str | None = No
         "transcript": (
             f"`{query}` 관련 자막 스니펫이 없습니다.\n"
             "다음처럼 다시 시도해 보세요:\n"
-            "- 더 짧은 키워드나 비슷한 표현 사용\n"
+            "- 문장을 조금 더 짧게 자르거나 핵심 표현만 남기기\n"
             f"- `{search_hint}` 로 제목+자막 통합 검색\n"
-            f"- `{browse_hint}` 로 최근 흐름부터 먼저 확인"
+            f"- `{browse_hint}` 로 먼저 관련 영상을 훑어보기"
         ),
         "thumbnail": (
             f"`{query}` 관련 썸네일 후보를 찾지 못했습니다.\n"
@@ -521,11 +534,9 @@ def unknown_command_response(command: str) -> SlackResponse:
             f"`{command}` 명령을 이해하지 못했습니다.\n"
             "이렇게 시작해 보세요:\n"
             "- `/syuka help`\n"
-            "- `/syuka 추천질문`\n"
-            "- `/syuka 슈카월드 최신 5`\n"
-            "- `/syuka 슈카월드 2025년`\n"
-            "- `/syuka 주제찾기 반도체`\n"
-            "- `/syuka 언급찾기 관세`"
+            "- `/syuka 슈카월드`\n"
+            "- `/syuka 월드주제 AI`\n"
+            '- `/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`'
         )
     )
 
@@ -629,6 +640,19 @@ COMMAND_HINTS = (
     "언급찾기",
     "썸네일",
     "슈카월드",
+    "머니코믹스",
+    "월드",
+    "머코",
+    "월드주제",
+    "월드언급",
+    "월드광고",
+    "월드썸넬",
+    "월드썸네일",
+    "머코주제",
+    "머코언급",
+    "머코광고",
+    "머코썸넬",
+    "머코썸네일",
     "help",
     "도움말",
 )
@@ -856,11 +880,13 @@ def examples_response() -> SlackResponse:
             "추천질문",
             "- 최근 영상 보기: `/syuka 슈카월드`",
             "- 머코 최근 보기: `/syuka 머니코믹스`",
-            "- 월드 주제 찾기: `/syuka 월드주제 반도체`",
-            "- 머코 실제 발언 찾기: `/syuka 머코언급 금리`",
-            "- 머코 광고 사례 찾기: `/syuka 머코광고 삼성`",
-            "- 썸네일 보기: `/syuka 머코썸넬 반도체`",
-            "- 영상 상세 보기: `/syuka video abc123`",
+            "- 월드 주제 찾기: `/syuka 월드주제 AI`",
+            '- 월드 실제 발언 찾기: `/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`',
+            "- 머코 주제 찾기: `/syuka 머코주제 트럼프`",
+            '- 머코 실제 발언 찾기: `/syuka 머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"`',
+            "- 머코 광고 사례 찾기: `/syuka 머코광고 시킹알파`",
+            "- 썸네일 보기: `/syuka 머코썸넬 트럼프`",
+            "- 영상 상세 보기: `/syuka video wIuEqwmuORU`",
         ]
     )
     blocks = [
@@ -869,23 +895,28 @@ def examples_response() -> SlackResponse:
             "*이렇게 물어보면 바로 써보기 좋습니다*\n"
             "`/syuka 슈카월드`\n"
             "`/syuka 머니코믹스`\n"
-            "`/syuka 월드주제 반도체`\n"
-            "`/syuka 머코언급 금리`\n"
-            "`/syuka 머코광고 삼성`\n"
-            "`/syuka 머코썸넬 반도체`\n"
+            "`/syuka 월드주제 AI`\n"
+            '`/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`' "\n"
+            "`/syuka video NwNvW0lLVtc`\n"
+            "`/syuka 머코주제 트럼프`\n"
+            '`/syuka 머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"`' "\n"
+            "`/syuka 머코광고 시킹알파`\n"
+            "`/syuka video wIuEqwmuORU`\n"
+            "`/syuka 머코썸넬 트럼프`\n"
             "`/syuka collect-status`"
         ),
         block_actions(
             button_command("슈카월드", "슈카월드", action_id="run_command_world"),
             button_command("머니코믹스", "머니코믹스", action_id="run_command_moneycomics"),
-            button_command("월드주제", "월드주제 반도체", action_id="run_command_topic"),
-            button_command("머코언급", "머코언급 금리", action_id="run_command_mention"),
-            button_command("머코광고", "머코광고 삼성", action_id="run_command_ads"),
+            button_command("월드주제", "월드주제 AI", action_id="run_command_topic"),
+            button_command("월드언급", '월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', action_id="run_command_world_mention"),
+            button_command("월드광고", "월드광고 구글", action_id="run_command_ads"),
         ),
         block_actions(
-            button_command("월드언급", "월드언급 관세", action_id="run_command_world_mention"),
-            button_command("머코주제", "머코주제 금리", action_id="run_command_money_topic"),
-            button_command("머코썸넬", "머코썸넬 반도체", action_id="run_command_money_thumbnail"),
+            button_command("머코주제", "머코주제 트럼프", action_id="run_command_money_topic"),
+            button_command("머코언급", '머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"', action_id="run_command_mention"),
+            button_command("머코광고", "머코광고 시킹알파", action_id="run_command_money_ads"),
+            button_command("머코썸넬", "머코썸넬 트럼프", action_id="run_command_money_thumbnail"),
             button_command("도움말", "help", action_id="run_command_help"),
         ),
     ]
@@ -897,45 +928,46 @@ def help_response() -> SlackResponse:
     blocks = [
         block_header("슈카창고 도움말"),
         block_section(
-            "*어떻게 부르나요?*\n"
+            "*호출 방법*\n"
             "`/syuka help`\n"
             "`@슈카창고 help`\n"
-            "멘션으로 부르면 보통 해당 대화에 댓글처럼 이어서 답변합니다."
+            "채널과 DM에서 같은 명령어를 그대로 쓸 수 있고, 멘션으로 부르면 보통 해당 대화에 댓글처럼 이어서 답변합니다."
         ),
         block_section(
-            "*처음엔 이렇게 써보세요*\n"
+            "*바로 써보기*\n"
             "1. 최근 흐름을 보고 싶으면 `슈카월드`\n"
             "2. 머니코믹스 흐름을 보려면 `머니코믹스`\n"
-            "3. 특정 주제가 궁금하면 `월드주제 반도체`\n"
-            "4. 실제 발언을 찾고 싶으면 `머코언급 금리`\n"
-            "5. 광고 사례를 찾고 싶으면 `머코광고 삼성`"
+            "3. 특정 주제가 궁금하면 `월드주제 AI`\n"
+            '4. 실제 발언을 찾고 싶으면 `월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`' "\n"
+            "5. 영상 ID를 알고 있으면 `video <video_id>` 로 바로 상세를 여세요"
         ),
         block_actions(
             button_command("슈카월드", "슈카월드", action_id="run_command_world"),
             button_command("머니코믹스", "머니코믹스", action_id="run_command_moneycomics"),
-            button_command("월드주제", "월드주제 반도체", action_id="run_command_topic"),
-            button_command("머코언급", "머코언급 금리", action_id="run_command_mention"),
-            button_command("머코광고", "머코광고 삼성", action_id="run_command_ads"),
+            button_command("월드주제", "월드주제 AI", action_id="run_command_topic"),
+            button_command("월드언급", '월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', action_id="run_command_mention"),
+            button_command("월드광고", "월드광고 구글", action_id="run_command_ads"),
         ),
         block_section(
-            "*채널별 빠른 시작*\n"
-            "슈카월드: `슈카월드` → `월드주제 반도체` → `월드언급 관세`\n"
-            "머니코믹스: `머니코믹스` → `머코주제 금리` → `머코언급 금리`"
+            "*어떤 데이터를 읽나요?*\n"
+            "`주제`는 제목과 분석 키워드를 읽습니다.\n"
+            "`언급`은 자막에서 실제로 나온 문장과 대목을 읽습니다.\n"
+            "`광고`는 설명란에서 광고·협찬 문맥을 읽고, 추출 결과가 있으면 그 결과를 우선 보여줍니다."
         ),
         block_actions(
-            button_command("월드언급", "월드언급 관세", action_id="run_command_world_mention"),
-            button_command("월드썸넬", "월드썸넬 반도체", action_id="run_command_world_thumbnail"),
-            button_command("머코주제", "머코주제 금리", action_id="run_command_money_topic"),
-            button_command("머코썸넬", "머코썸넬 반도체", action_id="run_command_money_thumbnail"),
+            button_command("월드언급", '월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', action_id="run_command_world_mention"),
+            button_command("월드썸넬", "월드썸넬 AI", action_id="run_command_world_thumbnail"),
+            button_command("머코주제", "머코주제 트럼프", action_id="run_command_money_topic"),
+            button_command("머코언급", '머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"', action_id="run_command_mention"),
             button_command("추천질문", "추천질문", action_id="run_command_examples"),
         ),
         block_divider(),
         block_section(
             "*무엇을 할 수 있나요?*\n"
             "`슈카월드` `머니코믹스` 채널별 최근 업로드 영상 훑기\n"
-            "`주제찾기 <키워드>` 주제가 나온 영상 찾기\n"
-            "`언급찾기 <키워드>` 자막 속 실제 발언 찾기\n"
-            "`광고찾기 [업체명 또는 키워드]` 설명에 광고/지원 문구가 있는 영상 찾기\n"
+            "`주제찾기 <키워드>` 제목과 키워드 기준으로 관련 영상 찾기\n"
+            "`언급찾기 <문장 또는 표현>` 자막 속 실제 발언 찾기\n"
+            "`광고찾기 [업체명 또는 키워드]` 설명란 기준 광고/협찬 문맥 찾기\n"
             "`월드주제/월드언급/월드광고/월드썸넬` 슈카월드 전용 바로가기\n"
             "`머코주제/머코언급/머코광고/머코썸넬` 머니코믹스 전용 바로가기\n"
             "`video <video_id>` 영상 하나 자세히 보기\n"
@@ -949,20 +981,20 @@ def help_response() -> SlackResponse:
             "*자주 쓰는 예시*\n"
             "`/syuka 슈카월드`\n"
             "`/syuka 머니코믹스`\n"
-            "`/syuka 월드주제 반도체`\n"
-            "`/syuka 머코언급 금리`\n"
-            "`/syuka 머코광고 삼성`\n"
-            "`/syuka 머코썸넬 반도체`\n"
-            "`/syuka video abc123`\n"
-            "`/syuka 전문 abc123`\n"
+            "`/syuka 월드주제 AI`\n"
+            '`/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"`' "\n"
+            '`/syuka 머코언급 "본인이 버리지 못하는 물건들이 좀 있으세요"`' "\n"
+            "`/syuka 머코광고 시킹알파`\n"
+            "`/syuka 머코썸넬 트럼프`\n"
+            "`/syuka video wIuEqwmuORU`\n"
+            "`/syuka 전문 wIuEqwmuORU`\n"
             "`/syuka collect-status`"
         ),
         block_divider(),
         block_section(
-            "*작동 방식*\n"
+            "*결과 보기*\n"
             "검색 결과가 나오면 버튼으로 `상세 보기`, `썸네일 보기`, `YouTube 열기`를 바로 누를 수 있습니다.\n"
-            "명령어를 다시 입력하지 않아도 다음 화면으로 이어집니다.\n"
-            "무엇을 물어봐야 할지 막막하면 `/syuka 추천질문`을 먼저 써보세요."
+            "명령어를 다시 입력하지 않아도 다음 화면으로 이어집니다."
         ),
     ]
     return SlackResponse(text=text, blocks=blocks)
@@ -1020,7 +1052,6 @@ def search_response(
     blocks = [
         block_header(f"검색 결과: {query}"),
         block_section(pagination_text(page=page, shown_count=len(rows), total_count=total_count)),
-        block_section("원하는 결과가 없으면 `/syuka 언급찾기 <키워드>` 로 본문 발언도 찾아보세요."),
     ]
     for row in rows:
         keywords = display_keywords(parse_keywords_json(row["keywords_json"]))
@@ -1144,10 +1175,6 @@ def video_response(row) -> SlackResponse:
             [
                 block_divider(),
                 block_section("\n".join(quick_view_lines)),
-                block_section(
-                    "챕터가 있는 영상은 챕터 제목과 실제 자막 대목을 함께 보여드립니다.\n"
-                    "전문 버튼으로 더 많은 대목을 보고, 특정 표현은 `/syuka 언급찾기 <키워드>`로 찾아보세요."
-                ),
             ]
         )
         text += "\n핵심만 보기:\n" + "\n".join(rendered_points)
@@ -1302,7 +1329,6 @@ def transcript_response(
             block_actions(
                 button_command("상세", f"video {row['video_id']}", action_id=unique_action_id("run_command", "transcript", row["video_id"], "detail")),
                 button_command("썸네일", f"thumbnail {row['video_id']}", action_id=unique_action_id("run_command", "transcript", row["video_id"], "thumb")),
-                button_link("바로가기", youtube_timestamp_url(row, primary_offset), action_id="open_youtube_moment_link"),
                 button_link("유튜브", youtube_url(row), action_id="open_youtube_link"),
             )
         )
@@ -1321,6 +1347,28 @@ def ad_search_rows(
     channel_key: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     offset = (page - 1) * limit
+    extracted_rows = search_video_ad_rows(conn, query, limit=limit, offset=offset, channel_key=channel_key)
+    extracted_total_count = search_video_ad_rows_count(conn, query, channel_key=channel_key)
+    if extracted_rows:
+        return [
+            {
+                "video_id": row["video_id"],
+                "title": row["title"],
+                "upload_date": row["upload_date"],
+                "view_count": row["view_count"],
+                "like_count": row["like_count"],
+                "thumbnail_url": row["thumbnail_url"],
+                "source_url": row["source_url"],
+                "advertiser": row["advertiser"],
+                "matched_text": row["evidence_text"] or "",
+                "snippet": row["description_excerpt"] or row["evidence_text"] or "",
+                "match_type": "추출",
+                "score": int(round(float(row["confidence"] or 0) * 100)),
+                "analysis_source": row["analysis_source"],
+            }
+            for row in extracted_rows
+        ], extracted_total_count
+
     matched: list[dict[str, Any]] = []
     lower_query = query.lower().strip()
 
@@ -1391,18 +1439,22 @@ def ad_search_response(
     ]
     for row in rows:
         advertiser = row["advertiser"] or "광고주 미상"
-        match_type = row.get("match_type") or "확정"
         text_lines.append(
-            f"- {row['upload_date']} | {row['title']} | `{row['video_id']}` | {match_type} | 광고주 {advertiser}"
+            f"- {row['upload_date']} | {row['title']} | `{row['video_id']}` | 광고주 {advertiser}"
         )
         body_lines = [
             f"*{row['title']}*\n\n"
             f"`{row['video_id']}` | {row['upload_date']}\n"
             f"조회수 {row_number(row, 'view_count'):,} | 좋아요 {row_number(row, 'like_count'):,}",
-            f"*분류*\n{match_type}",
             f"*광고주*\n{advertiser}",
-            f"*설명 발췌*\n{row['snippet']}",
         ]
+        if row.get("matched_text"):
+            body_lines.append(f"*근거*\n{row['matched_text']}")
+        body_lines.extend(
+            [
+            f"*설명 발췌*\n{row['snippet']}",
+            ]
+        )
         section = block_section("\n\n".join(body_lines))
         if row["thumbnail_url"]:
             section["accessory"] = {
@@ -1464,7 +1516,6 @@ def thumbnail_candidates_response(
     blocks = [
         block_header(f"썸네일 후보: {query}"),
         block_section(pagination_text(page=page, shown_count=len(rows), total_count=total_count)),
-        block_section("정확한 `video_id`를 몰라도 제목/자막 기준으로 가장 관련 있는 후보를 보여드립니다."),
     ]
     for row in rows:
         section = block_section(
@@ -1499,61 +1550,50 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
             block_header("슈카창고"),
             block_section(
                 f"*{welcome_name}님, DM 탭에서 바로 시작해보세요.*\n"
-                "슈카월드와 머니코믹스 영상, 전문, 요약을 빠르게 찾는 내부 검색 도구입니다."
+                "슈카월드와 머니코믹스 영상을 채널별로 찾고, 자막 대목과 설명란 문맥까지 바로 확인하는 내부 검색 도구입니다."
             ),
             block_divider(),
             block_section(
-                "*채널 카드: 슈카월드*\n"
-                "긴 시계열 이슈, 거시경제, 국제정세, 산업 분석을 훑기 좋습니다.\n"
-                "추천 시작: `슈카월드` → `월드주제 반도체` → `월드언급 관세`"
+                "*슈카월드*"
             ),
-            block_actions(
-                button_command("슈카월드", "슈카월드", action_id="run_command_home_world"),
-                button_command("월드주제", "월드주제 반도체", action_id="run_command_home_topic"),
-                button_command("월드언급", "월드언급 관세", action_id="run_command_home_world_mention"),
-                button_command("월드광고", "월드광고 한국거래소", action_id="run_command_home_world_ads"),
-                button_command("월드썸넬", "월드썸넬 반도체", action_id="run_command_home_world_thumbnail"),
-            ),
+        block_actions(
+            button_command("슈카월드", "슈카월드", action_id="run_command_home_world"),
+            button_command("월드주제", "월드주제 AI", action_id="run_command_home_topic"),
+            button_command("월드언급", '월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', action_id="run_command_home_world_mention"),
+            button_command("월드광고", "월드광고 구글", action_id="run_command_home_world_ads"),
+            button_command("월드썸넬", "월드썸넬 염소", action_id="run_command_home_world_thumbnail"),
+        ),
             block_section(
-                "*채널 카드: 머니코믹스*\n"
-                "짧은 포맷, 실전 투자 이야기, 인터뷰와 예능성 콘텐츠를 빠르게 찾기 좋습니다.\n"
-                "추천 시작: `머니코믹스` → `머코주제 금리` → `머코언급 금리`"
+                "*머니코믹스*"
             ),
             block_actions(
                 button_command("머니코믹스", "머니코믹스", action_id="run_command_home_moneycomics"),
-                button_command("머코주제", "머코주제 금리", action_id="run_command_home_money_topic"),
-                button_command("머코언급", "머코언급 금리", action_id="run_command_home_mention"),
-                button_command("머코광고", "머코광고 카카오", action_id="run_command_home_ads"),
-                button_command("머코썸넬", "머코썸넬 반도체", action_id="run_command_home_money_thumbnail"),
-            ),
-            block_section(
-                "*공용 도구*\n"
-                "범용 명령과 빠른 진입 버튼도 그대로 쓸 수 있습니다."
-            ),
-            block_actions(
-                button_command("추천질문", "추천질문", action_id="run_command_home_examples"),
-                button_command("도움말", "help", action_id="run_command_home_help"),
-                button_command("collect-status", "collect-status", action_id="run_command_home_status"),
-                button_command("주제찾기", "주제찾기 반도체", action_id="run_command_home_generic_topic"),
-                button_command("광고찾기", "광고찾기 카카오", action_id="run_command_home_generic_ads"),
+                button_command("머코주제", "머코주제 트럼프", action_id="run_command_home_money_topic"),
+                button_command("머코언급", '머코언급 "돈은 안 내도 되는데 쿠팡도"', action_id="run_command_home_mention"),
+                button_command("머코광고", "머코광고 시킹알파", action_id="run_command_home_ads"),
+                button_command("머코썸넬", "머코썸넬 트럼프", action_id="run_command_home_money_thumbnail"),
             ),
             block_divider(),
             block_section(
-                "*누가 어떻게 쓰면 좋을까요?*\n"
-                "• *리서처* `월드주제 반도체` 또는 `주제찾기 반도체` : 예전에 다룬 주제, 비슷한 사례, 관련 영상을 한 번에 모아볼 때 좋습니다.\n"
-                "• *편집/PD* `머코언급 금리` : 특정 표현이 나온 대목과 시점을 확인하고, 필요한 영상만 전문으로 이어서 볼 수 있습니다.\n"
-                "• *마케터* `머코광고 카카오` 또는 `광고찾기 카카오` : 과거 광고 사례와 광고주를 확인하며 협찬 문맥을 점검할 때 유용합니다."
+                "*이렇게 보면 빠릅니다*\n"
+                "• `월드주제 AI` : (제목/요약) 관련 영상을 빠르게 모아볼 때\n"
+                '• `월드언급 "자, 오늘의 주제 AI 빅뱅입니다"` : (자막) 실제 발언 대목과 시점을 확인할 때' "\n"
+                "• `월드광고 구글` : (설명란) 광고 사례를 확인할 때\n"
+                "• `월드썸넬 염소` : (제목/요약) 기억나는 장면이나 키워드로 썸네일 후보를 바로 찾을 때"
+            ),
+            block_divider(),
+            block_section(
+                "*다른 호출 방법*\n"
+                "소개된 명령어는 모두 채널에서도 그대로 사용할 수 있습니다.\n"
+                "상세 보기는 `/syuka video <video_id>` 형태로 영상 아이디를 넣어 바로 열면 됩니다."
             ),
             block_divider(),
             block_section(
                 "*패치노트*\n"
                 "`2026-03-25` 슈카창고 베타 버전을 Slack에 처음 오픈했습니다.\n"
                 "`2026-04-01` 슈카창고를 상시 구동 환경에서 사용할 수 있게 정비했습니다.\n"
-                "`2026-04-08` 수집 자동화와 DB 정합성 점검을 보강해 최신 영상, 전문, 요약 데이터가 더 안정적으로 이어지도록 했습니다."
-            ),
-            block_section(
-                "*다른 호출 방법*\n"
-                "채널에서는 `/syuka 슈카월드`, `/syuka 머니코믹스`, `@슈카창고 help`처럼 호출할 수 있습니다."
+                "`2026-04-08` 수집 자동화와 DB 정합성 점검을 보강해 최신 영상, 전문, 요약 데이터가 더 안정적으로 이어지도록 했습니다.\n"
+                "`2026-04-25` 머니코믹스 영상도 슈카월드처럼 조회할 수 있게 확장했고, 홈 화면 예시와 채널별 명령 흐름을 함께 정리했습니다."
             ),
         ],
     }
@@ -1645,6 +1685,8 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
     channel_display_name: str | None = None
     command_name = raw_command
 
+    scoped_command = raw_command in PREFIXED_CHANNEL_COMMANDS or raw_command in CHANNEL_BROWSE_COMMANDS
+
     if raw_command in PREFIXED_CHANNEL_COMMANDS:
         command, channel_key = PREFIXED_CHANNEL_COMMANDS[raw_command]
         channel_display_name = get_channel_config(channel_key).display_name
@@ -1680,7 +1722,7 @@ def handle_query(text: str, *, data_dir: str | None = None) -> SlackResponse:
         "status": "collect-status",
         "상태": "collect-status",
     }
-    if command_name == raw_command:
+    if command_name == raw_command and not scoped_command:
         command = command_aliases.get(command, command)
         command_name = command
 

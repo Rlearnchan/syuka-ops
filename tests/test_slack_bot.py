@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import os
 import sqlite3
 import tempfile
@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from syuka_ops import slack_bot
-from syuka_ops.db import init_db, record_attempt, upsert_transcript, upsert_video, upsert_video_analysis
+from syuka_ops.db import init_db, record_attempt, upsert_transcript, upsert_video, upsert_video_ad_analysis, upsert_video_analysis
 from syuka_ops.text_utils import (
     build_llm_context,
     chunk_for_llm,
@@ -234,6 +234,15 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn("new999", response.text)
         self.assertIn("결과 1/3건", response.blocks[1]["text"]["text"])
 
+    def test_channel_browse_pagination_keeps_channel_scope(self) -> None:
+        response = slack_bot.handle_query("슈카월드 최신 1 --page 2", data_dir=str(self.data_dir))
+        self.assertIn("슈카월드 최신순", response.text)
+        self.assertNotIn("year2025", response.text)
+
+    def test_prefixed_search_pagination_keeps_channel_scope(self) -> None:
+        response = slack_bot.handle_query("월드주제 AI --limit 1 --page 2", data_dir=str(self.data_dir))
+        self.assertNotIn("year2025", response.text)
+
     def test_handle_query_world_year_and_likes(self) -> None:
         upsert_video(
             self.conn,
@@ -418,7 +427,27 @@ class SlackBotTestCase(unittest.TestCase):
         response = slack_bot.handle_query("광고찾기 카카오", data_dir=str(self.data_dir))
 
         self.assertIn("ad_candidate", response.text)
-        self.assertIn("후보", response.text)
+        self.assertIn("광고주 카카오", response.text)
+
+    def test_handle_query_ads_prefers_extracted_ad_analysis(self) -> None:
+        upsert_video_ad_analysis(
+            self.conn,
+            {
+                "video_id": "abc123",
+                "ad_detected": True,
+                "advertiser": "시킹알파",
+                "evidence_text": "이 영상은 시킹알파의 유료광고를 포함하고 있습니다.",
+                "description_excerpt": "시킹알파의 유료광고가 포함된 영상입니다.",
+                "confidence": 0.98,
+                "raw_json": '{"ad_detected": true}',
+                "analysis_source": "generated_openai_ad_batch",
+            },
+        )
+        self.conn.commit()
+
+        response = slack_bot.handle_query("광고찾기 시킹알파", data_dir=str(self.data_dir))
+        self.assertIn("광고주 시킹알파", response.text)
+        self.assertTrue(any("근거" in block.get("text", {}).get("text", "") for block in response.blocks if block["type"] == "section"))
 
     def test_handle_query_accepts_simple_natural_language(self) -> None:
         topic = slack_bot.handle_query("반도체 영상 찾아줘", data_dir=str(self.data_dir))
@@ -456,13 +485,12 @@ class SlackBotTestCase(unittest.TestCase):
         rendered = "\n".join(block.get("text", {}).get("text", "") for block in view["blocks"] if "text" in block)
         self.assertIn("테스터님", rendered)
         self.assertIn("패치노트", rendered)
-        self.assertIn("상시 구동 환경", rendered)
         self.assertIn("슈카월드", rendered)
-        self.assertIn("주제찾기 반도체", rendered)
-        self.assertIn("광고찾기 카카오", rendered)
-        self.assertIn("@슈카창고 help", rendered)
-        self.assertIn("리서처", rendered)
-        self.assertIn("광고찾기", rendered)
+        self.assertIn("월드주제 AI", rendered)
+        self.assertIn('월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', rendered)
+        self.assertIn("월드광고 구글", rendered)
+        self.assertIn("`/syuka video <video_id>`", rendered)
+        self.assertIn("머니코믹스 영상도 슈카월드처럼 조회할 수 있게", rendered)
 
     def test_app_home_result_view_contains_result_blocks(self) -> None:
         response = slack_bot.handle_query("슈카월드 최신 5", data_dir=str(self.data_dir))
@@ -478,9 +506,10 @@ class SlackBotTestCase(unittest.TestCase):
 
     def test_help_contains_onboarding_examples(self) -> None:
         response = slack_bot.handle_query("help", data_dir=str(self.data_dir))
-        self.assertIn("처음 쓰는 분께 추천", response.text)
+        self.assertIn("바로 써보기", response.text)
         self.assertIn("@슈카창고 help", response.text)
-        self.assertIn("썸네일 반도체", response.text)
+        self.assertIn("머코광고 시킹알파", response.text)
+        self.assertIn("video <video_id>", response.text)
         self.assertEqual(response.blocks[3]["type"], "actions")
 
     def test_button_command_helper(self) -> None:
@@ -508,7 +537,7 @@ class SlackBotTestCase(unittest.TestCase):
     def test_unknown_command_response_is_helpful(self) -> None:
         response = slack_bot.handle_query("모르겠는명령", data_dir=str(self.data_dir))
         self.assertIn("이해하지 못했습니다", response.text)
-        self.assertIn("/syuka 추천질문", response.text)
+        self.assertIn('/syuka 월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', response.text)
 
     def test_text_utils_prepare_chunks_for_future_llm_use(self) -> None:
         text = "첫 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
