@@ -77,7 +77,7 @@ def configure_logging() -> None:
         pass
 
 logger = logging.getLogger(__name__)
-HOME_BANNER_URL = "https://raw.githubusercontent.com/Rlearnchan/syuka-ops/main/%EB%B0%B0%EB%84%88.jpg"
+HOME_BANNER_URL = "https://raw.githubusercontent.com/Rlearnchan/syuka-ops/main/%EB%B0%B0%EB%84%88-home.jpg"
 USER_NAME_CACHE: dict[str, str] = {}
 CHANNEL_BROWSE_COMMANDS = {
     "world": ("syukaworld", "슈카월드"),
