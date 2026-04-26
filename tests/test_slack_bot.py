@@ -1,4 +1,5 @@
 ﻿from __future__ import annotations
+import json
 import os
 import sqlite3
 import tempfile
@@ -580,12 +581,17 @@ class SlackBotTestCase(unittest.TestCase):
         view = slack_bot.app_home_view(user_name="테스터")
         self.assertEqual(view["type"], "home")
         rendered = "\n".join(block.get("text", {}).get("text", "") for block in view["blocks"] if "text" in block)
+        rendered_json = json.dumps(view, ensure_ascii=False)
         self.assertIn("테스터님", rendered)
         self.assertIn("패치노트", rendered)
         self.assertIn("슈카월드", rendered)
-        self.assertIn("월드주제 AI", rendered)
-        self.assertIn('월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', rendered)
-        self.assertIn("월드광고 구글", rendered)
+        self.assertIn("검색 방법", rendered)
+        self.assertIn("활용 가능 명령어", rendered)
+        self.assertIn("월드주제 투자", rendered)
+        self.assertIn("월드언급 효율적으로 대응", rendered)
+        self.assertIn("월드광고 카카오페이증권", rendered)
+        self.assertIn("`슈카월드`, `월드쇼츠`", rendered)
+        self.assertIn("raw.githubusercontent.com/Rlearnchan/syuka-ops/main/", rendered_json)
         self.assertIn("`/syuka video <video_id>`", rendered)
         self.assertIn("영상 정보 수집을 자동화했습니다.", rendered)
         self.assertIn("머니코믹스 채널을 추가하고, 광고 검색을 보강했습니다.", rendered)

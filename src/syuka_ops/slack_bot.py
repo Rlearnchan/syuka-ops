@@ -77,6 +77,7 @@ def configure_logging() -> None:
         pass
 
 logger = logging.getLogger(__name__)
+HOME_BANNER_URL = "https://raw.githubusercontent.com/Rlearnchan/syuka-ops/main/%E1%84%87%E1%85%A2%E1%84%82%E1%85%A5.png"
 USER_NAME_CACHE: dict[str, str] = {}
 CHANNEL_BROWSE_COMMANDS = {
     "world": ("syukaworld", "슈카월드"),
@@ -1588,34 +1589,33 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
             ),
             block_divider(),
             block_section(
-                "*슈카월드*"
-            ),
-        block_actions(
-            button_command("슈카월드", "슈카월드", action_id="run_command_home_world"),
-            button_command("월드주제", "월드주제 AI", action_id="run_command_home_topic"),
-            button_command("월드언급", '월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', action_id="run_command_home_world_mention"),
-            button_command("월드광고", "월드광고 구글", action_id="run_command_home_world_ads"),
-            button_command("월드썸넬", "월드썸넬 염소", action_id="run_command_home_world_thumbnail"),
-            button_command("월드쇼츠", "월드쇼츠 최신 5", action_id="run_command_home_world_shorts"),
-        ),
-            block_section(
-                "*머니코믹스*"
+                "*활용 가능 명령어*"
             ),
             block_actions(
+            button_command("슈카월드", "슈카월드", action_id="run_command_home_world"),
+            button_command("월드쇼츠", "월드쇼츠 잉어", action_id="run_command_home_world_shorts"),
+            button_command("월드주제", "월드주제 투자", action_id="run_command_home_topic"),
+            button_command("월드언급", "월드언급 효율적으로 대응", action_id="run_command_home_world_mention"),
+            button_command("월드광고", "월드광고 카카오페이증권", action_id="run_command_home_world_ads"),
+            button_command("월드썸넬", "월드썸넬 염소", action_id="run_command_home_world_thumbnail"),
+        ),
+            block_actions(
                 button_command("머니코믹스", "머니코믹스", action_id="run_command_home_moneycomics"),
+                button_command("머코쇼츠", "머코쇼츠 최신 5", action_id="run_command_home_money_shorts"),
                 button_command("머코주제", "머코주제 트럼프", action_id="run_command_home_money_topic"),
                 button_command("머코언급", '머코언급 "돈은 안 내도 되는데 쿠팡도"', action_id="run_command_home_mention"),
                 button_command("머코광고", "머코광고 시킹알파", action_id="run_command_home_ads"),
                 button_command("머코썸넬", "머코썸넬 트럼프", action_id="run_command_home_money_thumbnail"),
-                button_command("머코쇼츠", "머코쇼츠 최신 5", action_id="run_command_home_money_shorts"),
             ),
             block_divider(),
+            image_block(HOME_BANNER_URL, "슈카창고 배너"),
             block_section(
-                "*이렇게 보면 빠릅니다*\n"
-                "• `월드주제 AI` : (제목/요약) 관련 영상을 빠르게 모아볼 때\n"
-                '• `월드언급 "자, 오늘의 주제 AI 빅뱅입니다"` : (자막) 실제 발언 대목과 시점을 확인할 때' "\n"
-                "• `월드광고 구글` : (설명란) 광고 사례를 확인할 때\n"
-                "• `월드썸넬 염소` : (제목/요약) 기억나는 장면이나 키워드로 썸네일 후보를 바로 찾을 때"
+                "*검색 방법*\n"
+                "• `슈카월드`, `월드쇼츠` : 최신 업로드 흐름을 먼저 볼 때\n"
+                "• `월드주제 투자` : 관련 영상을 넓게 모아볼 때\n"
+                "• `월드언급 효율적으로 대응` : 실제 발언 대목을 확인할 때\n"
+                "• `월드광고 카카오페이증권` : 설명란 광고 사례를 바로 볼 때\n"
+                "• `월드썸넬 염소` : 기억나는 장면으로 썸네일 후보를 찾을 때"
             ),
             block_divider(),
             block_section(
