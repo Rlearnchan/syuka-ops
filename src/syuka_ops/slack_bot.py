@@ -77,7 +77,7 @@ def configure_logging() -> None:
         pass
 
 logger = logging.getLogger(__name__)
-HOME_BANNER_URL = "https://raw.githubusercontent.com/Rlearnchan/syuka-ops/main/%E1%84%87%E1%85%A2%E1%84%82%E1%85%A5.png"
+HOME_BANNER_URL = "https://raw.githubusercontent.com/Rlearnchan/syuka-ops/main/%EB%B0%B0%EB%84%88.jpg"
 USER_NAME_CACHE: dict[str, str] = {}
 CHANNEL_BROWSE_COMMANDS = {
     "world": ("syukaworld", "슈카월드"),
@@ -1620,7 +1620,7 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
             block_divider(),
             block_section(
                 "*다른 호출 방법*\n"
-                "소개된 명령어는 모두 채널에서도 그대로 사용할 수 있습니다.\n"
+                "소개된 명령어는 모두 채널에서도 그대로 사용할 수 있습니다. `/syuka 명령어 검색어` 형태로 쓰면 됩니다.\n"
                 "상세 보기는 `/syuka video <video_id>` 형태로 영상 아이디를 넣어 바로 열면 됩니다."
             ),
             block_divider(),
