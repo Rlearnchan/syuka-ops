@@ -227,9 +227,9 @@ def subtitle_status_label(row) -> str:
         return "수동 자막"
     if transcript_source == "auto":
         return "자동 자막"
-    if row["has_ko_sub"]:
+    if row_number(row, "has_ko_sub"):
         return "수동 자막"
-    if row["has_auto_ko_sub"]:
+    if row_number(row, "has_auto_ko_sub"):
         return "자동 자막"
     return "자막 없음"
 
@@ -237,7 +237,8 @@ def subtitle_status_label(row) -> str:
 def video_meta_line(row) -> str:
     channel_name = row_text(row, "channel_name")
     channel_part = f"{channel_name} | " if channel_name else ""
-    return f"`{row['video_id']}` | {channel_part}{row['upload_date']} | {subtitle_status_label(row)}"
+    kind_part = "쇼츠 | " if row_number(row, "is_short") else ""
+    return f"`{row['video_id']}` | {channel_part}{row['upload_date']} | {kind_part}{subtitle_status_label(row)}"
 
 
 def video_stats_line(row) -> str:
@@ -1299,7 +1300,7 @@ def transcript_response(
             rendered_snippets.append(f"> ({timestamp}) {highlighted_snippet}" if timestamp else f"> {highlighted_snippet}")
         snippet_text = "\n".join(rendered_snippets) if rendered_snippets else "- 관련 발췌를 만들지 못했습니다."
         plain_context = context_summary or analysis_pending_text(has_transcript=bool(row["dialogue"]))
-        lines.append(f"- {row['upload_date']} | {row['title']} | `{row['video_id']}`\n맥락: {plain_context}\n{snippet_text}")
+        lines.append(f"- {row['title']} | {video_meta_line(row)}\n맥락: {plain_context}\n{snippet_text}")
         keyword_line = keyword_badges(keywords, limit=4)
         linked_snippets: list[str] = []
         for index, snippet in enumerate(snippets):
@@ -1310,8 +1311,8 @@ def transcript_response(
         block_snippet_text = "\n".join(linked_snippets) if linked_snippets else "- 관련 발췌를 만들지 못했습니다."
         body_lines = [
             f"*{row['title']}*\n\n"
-            f"`{row['video_id']}` | {row['upload_date']}\n"
-            f"조회수 {row_number(row, 'view_count'):,} | 좋아요 {row_number(row, 'like_count'):,}"
+            f"{video_meta_line(row)}\n"
+            f"{video_stats_line(row)}"
         ]
         if context_summary:
             body_lines.append(f"*맥락*\n{context_summary}")
@@ -1470,13 +1471,11 @@ def ad_search_response(
     for row in rows:
         advertiser = row["advertiser"] or "광고주 미상"
         advertiser_candidates = [candidate for candidate in row.get("advertiser_candidates", []) if candidate]
-        text_lines.append(
-            f"- {row['upload_date']} | {row['title']} | `{row['video_id']}` | 광고주 {advertiser}"
-        )
+        text_lines.append(f"- {row['title']} | {video_meta_line(row)} | 광고주 {advertiser}")
         body_lines = [
             f"*{row['title']}*\n\n"
-            f"`{row['video_id']}` | {row['upload_date']}\n"
-            f"조회수 {row_number(row, 'view_count'):,} | 좋아요 {row_number(row, 'like_count'):,}",
+            f"{video_meta_line(row)}\n"
+            f"{video_stats_line(row)}",
             f"*광고주*\n{advertiser}",
         ]
         if len(advertiser_candidates) > 1:
@@ -1518,15 +1517,14 @@ def thumbnail_response(row) -> SlackResponse:
     text = (
         f"썸네일 보기\n"
         f"- 제목: {row['title']}\n"
-        f"- 업로드일: {row['upload_date']}\n"
-        f"- video_id: `{row['video_id']}`\n"
+        f"- 메타: {video_meta_line(row)}\n"
         f"- 썸네일: {row['thumbnail_url']}"
     )
     blocks = [
         block_header("영상 썸네일"),
         block_section(
             f"*{row['title']}*\n"
-            f"`{row['video_id']}` | {row['upload_date']}"
+            f"{video_meta_line(row)}"
         ),
         block_divider(),
         image_block(row["thumbnail_url"], row["title"]),
@@ -1556,8 +1554,8 @@ def thumbnail_candidates_response(
     for row in rows:
         section = block_section(
             f"*{row['title']}*\n\n"
-            f"`{row['video_id']}` | {row['upload_date']}\n"
-            f"조회수 {row_number(row, 'view_count'):,} | 좋아요 {row_number(row, 'like_count'):,}"
+            f"{video_meta_line(row)}\n"
+            f"{video_stats_line(row)}"
         )
         if row["thumbnail_url"]:
             section["accessory"] = {
@@ -1598,6 +1596,7 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
             button_command("월드언급", '월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', action_id="run_command_home_world_mention"),
             button_command("월드광고", "월드광고 구글", action_id="run_command_home_world_ads"),
             button_command("월드썸넬", "월드썸넬 염소", action_id="run_command_home_world_thumbnail"),
+            button_command("월드쇼츠", "월드쇼츠 최신 5", action_id="run_command_home_world_shorts"),
         ),
             block_section(
                 "*머니코믹스*"
@@ -1608,6 +1607,7 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
                 button_command("머코언급", '머코언급 "돈은 안 내도 되는데 쿠팡도"', action_id="run_command_home_mention"),
                 button_command("머코광고", "머코광고 시킹알파", action_id="run_command_home_ads"),
                 button_command("머코썸넬", "머코썸넬 트럼프", action_id="run_command_home_money_thumbnail"),
+                button_command("머코쇼츠", "머코쇼츠 최신 5", action_id="run_command_home_money_shorts"),
             ),
             block_divider(),
             block_section(
@@ -1628,8 +1628,9 @@ def app_home_view(*, user_name: str | None = None) -> dict[str, Any]:
                 "*패치노트*\n"
                 "`2026-03-25` 슈카창고 베타 버전을 Slack에 처음 오픈했습니다.\n"
                 "`2026-04-01` 슈카창고를 상시 구동 환경에서 사용할 수 있게 정비했습니다.\n"
-                "`2026-04-08` 수집 자동화와 DB 정합성 점검을 보강해 최신 영상, 전문, 요약 데이터가 더 안정적으로 이어지도록 했습니다.\n"
-                "`2026-04-25` 머니코믹스 영상도 슈카월드처럼 조회할 수 있게 확장했고, 홈 화면 예시와 채널별 명령 흐름을 함께 정리했습니다."
+                "`2026-04-08` 영상 정보 수집을 자동화했습니다.\n"
+                "`2026-04-25` 머니코믹스 채널을 추가하고, 광고 검색을 보강했습니다.\n"
+                "`2026-04-26` 쇼츠 지원을 추가했습니다."
             ),
         ],
     }

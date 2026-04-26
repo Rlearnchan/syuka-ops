@@ -429,6 +429,10 @@ def refresh_videos_from_local_info_json(
 def compute_incremental_last_n(conn, *, channel_key: str | None = None, is_short: bool | None = None) -> int | None:
     latest_date = latest_video_date(conn, channel_key=channel_key, is_short=is_short)
     if not latest_date:
+        if is_short:
+            # First shorts sync should stay intentionally small so we can verify
+            # the pipeline end-to-end before attempting a broad backfill.
+            return 30
         return None
     latest = datetime.strptime(latest_date, "%Y-%m-%d").date()
     today = datetime.now().date()
@@ -507,8 +511,6 @@ def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
             row = video_rows.get(video_id)
             if not row:
                 continue
-            if row["is_short"]:
-                continue
             if not row["has_ko_sub"] and not row["has_auto_ko_sub"]:
                 continue
             transcript = conn.execute(
@@ -525,7 +527,7 @@ def select_target_video_ids(conn, options: CollectOptions) -> list[str]:
     if options.mode == "retry-failed":
         targets = failed_subtitle_video_ids(conn)
     else:
-        conditions = ["COALESCE(is_short, 0) = 0", "(has_ko_sub = 1 OR has_auto_ko_sub = 1)"]
+        conditions = ["(has_ko_sub = 1 OR has_auto_ko_sub = 1)"]
         params: list[str] = []
         if options.date_from:
             conditions.append("upload_date >= ?")
@@ -1253,7 +1255,7 @@ def run_collect(options: CollectOptions) -> None:
                     )
                 )
             upsert_videos(conn, shorts)
-            options = replace(options, skip_transcripts=True)
+            options = replace(options, video_ids=[row["video_id"] for row in shorts])
         elif options.mode == "incremental-shorts":
             shorts: list[dict] = []
             for channel_key, channel_name, channel_url in channels:
@@ -1274,7 +1276,7 @@ def run_collect(options: CollectOptions) -> None:
                 )
             if shorts:
                 upsert_videos(conn, shorts)
-                options = replace(options, video_ids=[row["video_id"] for row in shorts], skip_transcripts=True)
+                options = replace(options, video_ids=[row["video_id"] for row in shorts])
             else:
                 print("Latest shorts metadata is already up to date; skipping shorts metadata refresh.")
         elif options.mode == "sync-channel-meta":

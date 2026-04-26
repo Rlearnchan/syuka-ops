@@ -50,6 +50,11 @@ class SlackBotTestCase(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self.short_info_path = self.data_dir / "short001.info.json"
+        self.short_info_path.write_text(
+            '{"description":"염소 쇼츠 설명란입니다. 시장 비유를 짧게 남겼습니다."}',
+            encoding="utf-8",
+        )
         db_dir = self.data_dir / "db"
         db_dir.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_dir / "syuka_ops.db"))
@@ -172,10 +177,20 @@ class SlackBotTestCase(unittest.TestCase):
                 "view_count": 777777,
                 "like_count": 9999,
                 "has_ko_sub": False,
-                "has_auto_ko_sub": False,
+                "has_auto_ko_sub": True,
                 "thumbnail_url": "https://example.com/short.jpg",
                 "source_url": "https://www.youtube.com/shorts/short001",
-                "info_json_path": str(self.info_path),
+                "info_json_path": str(self.short_info_path),
+            },
+        )
+        upsert_transcript(
+            self.conn,
+            {
+                "video_id": "short001",
+                "dialogue": "염소가 갑자기 시장 비유로 등장합니다. 이 표현은 쇼츠에서만 나옵니다.",
+                "subtitle_path": str(self.subtitle_path),
+                "subtitle_source": "auto",
+                "segment_count": 2,
             },
         )
         record_attempt(
@@ -402,6 +417,11 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn("썸네일 후보", response.text)
         self.assertEqual(response.blocks[0]["text"]["text"], "썸네일 후보: 반도체")
 
+    def test_handle_query_thumbnail_includes_shorts(self) -> None:
+        response = slack_bot.handle_query("월드썸넬 염소", data_dir=str(self.data_dir))
+        self.assertIn("short001", response.text)
+        self.assertIn("쇼츠", response.text)
+
     def test_handle_query_transcript(self) -> None:
         response = slack_bot.handle_query("transcript 관세", data_dir=str(self.data_dir))
         self.assertIn("abc123", response.text)
@@ -413,6 +433,11 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn("(00:00)", response.text)
         self.assertIn("> (00:00)", response.text)
         self.assertIn("`관세`", response.text)
+
+    def test_handle_query_transcript_includes_shorts(self) -> None:
+        response = slack_bot.handle_query("월드언급 염소가 갑자기 시장 비유로 등장합니다", data_dir=str(self.data_dir))
+        self.assertIn("short001", response.text)
+        self.assertIn("쇼츠", response.text)
 
     def test_handle_query_ads(self) -> None:
         response = slack_bot.handle_query("광고찾기 한국거래소", data_dir=str(self.data_dir))
@@ -478,6 +503,28 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertTrue(any("광고주 후보" in block.get("text", {}).get("text", "") for block in response.blocks if block["type"] == "section"))
         self.assertTrue(any("2. 알파브리프" in block.get("text", {}).get("text", "") for block in response.blocks if block["type"] == "section"))
 
+    def test_handle_query_ads_includes_shorts(self) -> None:
+        upsert_video_ad_analysis(
+            self.conn,
+            {
+                "video_id": "short001",
+                "ad_detected": True,
+                "advertiser": "염소보험",
+                "advertiser_candidates_json": '["염소보험", "염소페이"]',
+                "evidence_text": "염소보험 제휴 링크는 설명란을 확인해 주세요.",
+                "description_excerpt": "염소보험 제휴 링크 안내",
+                "confidence": 0.87,
+                "raw_json": '{"ad_detected": true}',
+                "analysis_source": "generated_openai_ad_batch",
+            },
+        )
+        self.conn.commit()
+
+        response = slack_bot.handle_query("월드광고 염소보험", data_dir=str(self.data_dir))
+        self.assertIn("short001", response.text)
+        self.assertIn("광고주 염소보험", response.text)
+        self.assertIn("쇼츠", response.text)
+
     def test_handle_query_ads_matches_secondary_advertiser_candidate(self) -> None:
         upsert_video_ad_analysis(
             self.conn,
@@ -540,7 +587,9 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn('월드언급 "자, 오늘의 주제 AI 빅뱅입니다"', rendered)
         self.assertIn("월드광고 구글", rendered)
         self.assertIn("`/syuka video <video_id>`", rendered)
-        self.assertIn("머니코믹스 영상도 슈카월드처럼 조회할 수 있게", rendered)
+        self.assertIn("영상 정보 수집을 자동화했습니다.", rendered)
+        self.assertIn("머니코믹스 채널을 추가하고, 광고 검색을 보강했습니다.", rendered)
+        self.assertIn("쇼츠 지원을 추가했습니다.", rendered)
 
     def test_app_home_result_view_contains_result_blocks(self) -> None:
         response = slack_bot.handle_query("슈카월드 최신 5", data_dir=str(self.data_dir))
@@ -623,3 +672,4 @@ class SlackBotTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

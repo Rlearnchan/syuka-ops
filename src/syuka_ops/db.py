@@ -479,9 +479,9 @@ def search_videos(
         compact_like,
         like,
     ]
-    channel_clause = "COALESCE(v.is_short, 0) = 0 AND ("
+    channel_clause = "("
     if channel_key:
-        channel_clause = "v.channel_key = ? AND COALESCE(v.is_short, 0) = 0 AND ("
+        channel_clause = "v.channel_key = ? AND ("
     where_params: list[object] = []
     if channel_key:
         where_params.append(channel_key)
@@ -542,9 +542,9 @@ def search_videos_count(conn: sqlite3.Connection, query: str, *, channel_key: st
     like = f"%{query}%"
     compact_like = f"%{normalized_search_query(query)}%"
     params: list[object] = []
-    channel_clause = "COALESCE(v.is_short, 0) = 0 AND ("
+    channel_clause = "("
     if channel_key:
-        channel_clause = "v.channel_key = ? AND COALESCE(v.is_short, 0) = 0 AND ("
+        channel_clause = "v.channel_key = ? AND ("
         params.append(channel_key)
     row = conn.execute(
         f"""
@@ -600,7 +600,7 @@ def transcript_snippets(
 ) -> list[sqlite3.Row]:
     like = f"%{normalized_search_query(query)}%"
     params: list[object] = []
-    where_sql = "WHERE REPLACE(t.dialogue, ' ', '') LIKE ? AND COALESCE(v.is_short, 0) = 0"
+    where_sql = "WHERE REPLACE(t.dialogue, ' ', '') LIKE ?"
     params.append(like)
     if channel_key:
         where_sql += " AND v.channel_key = ?"
@@ -639,10 +639,7 @@ def transcript_snippets(
 def transcript_snippets_count(conn: sqlite3.Connection, query: str, *, channel_key: str | None = None) -> int:
     like = f"%{normalized_search_query(query)}%"
     params: list[object] = [like]
-    where_sql = (
-        "WHERE REPLACE(t.dialogue, ' ', '') LIKE ? "
-        "AND EXISTS (SELECT 1 FROM videos v WHERE v.video_id = t.video_id AND COALESCE(v.is_short, 0) = 0)"
-    )
+    where_sql = "WHERE REPLACE(t.dialogue, ' ', '') LIKE ?"
     if channel_key:
         where_sql += " AND EXISTS (SELECT 1 FROM videos v WHERE v.video_id = t.video_id AND v.channel_key = ?)"
         params.append(channel_key)
@@ -663,7 +660,6 @@ def video_rows_with_info_json(
     where_clauses = [
         "info_json_path IS NOT NULL",
         "TRIM(info_json_path) != ''",
-        "COALESCE(is_short, 0) = 0",
     ]
     params: list[object] = []
     if channel_key:
@@ -698,7 +694,7 @@ def search_video_ad_rows(
     like = f"%{query}%"
     compact_like = f"%{normalized_search_query(query)}%"
     params: list[object] = []
-    clauses = ["va.ad_detected = 1", "COALESCE(v.is_short, 0) = 0"]
+    clauses = ["va.ad_detected = 1"]
     if channel_key:
         clauses.append("v.channel_key = ?")
         params.append(channel_key)
@@ -748,7 +744,7 @@ def search_video_ad_rows_count(conn: sqlite3.Connection, query: str, *, channel_
     like = f"%{query}%"
     compact_like = f"%{normalized_search_query(query)}%"
     params: list[object] = []
-    clauses = ["va.ad_detected = 1", "COALESCE(v.is_short, 0) = 0"]
+    clauses = ["va.ad_detected = 1"]
     if channel_key:
         clauses.append("v.channel_key = ?")
         params.append(channel_key)
@@ -888,7 +884,6 @@ def pending_video_ad_analysis_rows(
     clauses = [
         "v.info_json_path IS NOT NULL",
         "TRIM(v.info_json_path) != ''",
-        "COALESCE(v.is_short, 0) = 0",
     ]
     params: list[object] = []
 
