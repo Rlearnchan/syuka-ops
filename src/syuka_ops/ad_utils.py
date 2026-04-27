@@ -33,6 +33,11 @@ AD_SIGNAL_KEYWORDS = [
     "앱 설치",
     "바로가기",
     "링크",
+    "준법감시인",
+    "심사필",
+    "원금손실",
+    "투자전 설명청취",
+    "투자자 귀속",
 ]
 
 
@@ -125,7 +130,20 @@ def ad_signal_score(title: str, description: str) -> int:
 
     cta_hits = sum(
         1
-        for keyword in ["링크", "가입", "할인", "쿠폰", "프로모션", "이벤트", "download", "install", "app"]
+        for keyword in [
+            "링크",
+            "가입",
+            "할인",
+            "쿠폰",
+            "프로모션",
+            "이벤트",
+            "계좌",
+            "연금저축",
+            "isa",
+            "download",
+            "install",
+            "app",
+        ]
         if keyword.lower() in combined
     )
     score += min(cta_hits, 2)

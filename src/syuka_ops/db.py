@@ -692,7 +692,9 @@ def search_video_ad_rows(
     conn: sqlite3.Connection, query: str, limit: int = 5, offset: int = 0, *, channel_key: str | None = None
 ) -> list[sqlite3.Row]:
     like = f"%{query}%"
-    compact_like = f"%{normalized_search_query(query)}%"
+    normalized_query = normalized_search_query(query)
+    compact_like = f"%{normalized_query}%"
+    compact_prefix = f"{normalized_query}%"
     params: list[object] = []
     clauses = ["va.ad_detected = 1"]
     if channel_key:
@@ -708,7 +710,18 @@ def search_video_ad_rows(
         "OR COALESCE(va.raw_json, '') LIKE ?"
         ")"
     )
-    params.extend([compact_like, compact_like, compact_like, compact_like, compact_like, like, limit, offset])
+    rank_params = [
+        normalized_query,
+        compact_prefix,
+        compact_like,
+        compact_like,
+        compact_like,
+        compact_like,
+        like,
+    ]
+    params.extend([compact_like, compact_like, compact_like, compact_like, compact_like, like])
+    params.extend(rank_params)
+    params.extend([limit, offset])
     return conn.execute(
         f"""
         SELECT
@@ -732,7 +745,19 @@ def search_video_ad_rows(
         FROM video_ad_analysis va
         JOIN videos v ON v.video_id = va.video_id
         WHERE {' AND '.join(clauses)}
-        ORDER BY COALESCE(va.confidence, 0) DESC, v.upload_date DESC
+        ORDER BY
+            CASE
+                WHEN REPLACE(COALESCE(va.advertiser, ''), ' ', '') = ? THEN 0
+                WHEN REPLACE(COALESCE(va.advertiser, ''), ' ', '') LIKE ? THEN 1
+                WHEN REPLACE(COALESCE(va.advertiser_candidates_json, ''), ' ', '') LIKE ? THEN 2
+                WHEN REPLACE(COALESCE(va.evidence_text, ''), ' ', '') LIKE ? THEN 3
+                WHEN REPLACE(COALESCE(va.description_excerpt, ''), ' ', '') LIKE ? THEN 4
+                WHEN REPLACE(COALESCE(v.title, ''), ' ', '') LIKE ? THEN 5
+                WHEN COALESCE(va.raw_json, '') LIKE ? THEN 6
+                ELSE 7
+            END,
+            v.upload_date DESC,
+            COALESCE(va.confidence, 0) DESC
         LIMIT ?
         OFFSET ?
         """,

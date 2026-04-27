@@ -51,7 +51,7 @@ from .db import (
 )
 from .import_legacy_script import import_script_analysis
 from .script_catalog import default_script_csv_path
-from .subtitle_utils import parse_vtt_to_subs
+from .subtitle_utils import load_subtitle_segments, parse_vtt_to_subs
 from .text_utils import normalize_dialogue, strip_caption_markup
 
 
@@ -63,6 +63,27 @@ def norm_date(x: str) -> str:
 
 def clean_text(text: str) -> str:
     return normalize_dialogue(strip_caption_markup(text))
+
+
+def build_transcript_payload(subtitle_path: str | Path, subtitle_source: str) -> tuple[str, int]:
+    path = Path(subtitle_path)
+    source = (subtitle_source or "manual").strip().lower()
+
+    if source == "auto":
+        segments = load_subtitle_segments(str(path))
+        dialogue = clean_text(" ".join(segment.text for segment in segments if segment.text.strip()))
+        return dialogue, len(segments)
+
+    try:
+        if path.suffix.lower() == ".srt":
+            subs = list(srt.parse(path.read_text(encoding="utf-8")))
+        else:
+            subs = parse_vtt_to_subs(path)
+    except Exception:
+        return "", 0
+
+    dialogue = clean_text(" ".join(sub.content.strip() for sub in subs if sub.content.strip()))
+    return dialogue, len(subs)
 
 
 def is_asr_subtitle_entry(entry: dict) -> bool:
@@ -1033,6 +1054,7 @@ def collect_transcripts(conn, paths: AppPaths, options: CollectOptions) -> None:
         srt_paths, vtt_paths = subtitle_paths(paths.raw_dir, video_id)
         subs = []
         subtitle_path = None
+        subtitle_source = result.get("subtitle_source", "manual")
         if srt_paths:
             subtitle_path = srt_paths[0]
             try:
@@ -1047,17 +1069,19 @@ def collect_transcripts(conn, paths: AppPaths, options: CollectOptions) -> None:
         if not subs:
             continue
 
-        dialogue = clean_text(" ".join(sub.content.strip() for sub in subs if sub.content.strip()))
+        dialogue, segment_count = build_transcript_payload(subtitle_path, subtitle_source)
+        if not dialogue:
+            continue
         upsert_transcript(
             conn,
                 {
                     "video_id": video_id,
                     "dialogue": dialogue,
                     "subtitle_path": paths.to_portable_path(subtitle_path),
-                    "subtitle_source": result.get("subtitle_source", "manual"),
-                    "segment_count": len(subs),
+                    "subtitle_source": subtitle_source,
+                    "segment_count": segment_count,
                 },
-            )
+        )
         conn.commit()
 
         if options.video_batch_size > 0 and index % min(options.video_batch_size, 20) == 0 and index < len(target_video_ids):

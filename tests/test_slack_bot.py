@@ -547,6 +547,55 @@ class SlackBotTestCase(unittest.TestCase):
         self.assertIn("abc123", response.text)
         self.assertIn("광고주 시킹알파", response.text)
 
+    def test_handle_query_ads_prioritizes_direct_advertiser_partial_match(self) -> None:
+        upsert_video(
+            self.conn,
+            {
+                "video_id": "zzz999",
+                "title": "카카오 관련 시장 이슈 정리",
+                "upload_date": "2024-05-01",
+                "view_count": 100,
+                "like_count": 10,
+                "thumbnail_url": "https://example.com/zzz999.jpg",
+                "source_url": "https://youtu.be/zzz999",
+                "channel_key": "syukaworld",
+                "channel_name": "슈카월드",
+            },
+        )
+        upsert_video_ad_analysis(
+            self.conn,
+            {
+                "video_id": "abc123",
+                "ad_detected": True,
+                "advertiser": "카카오페이증권",
+                "advertiser_candidates_json": '["카카오페이증권", "카카오"]',
+                "evidence_text": "카카오페이증권과 함께하는 영상입니다.",
+                "description_excerpt": "카카오페이증권에서 부담 없이 적립식 투자를 해 보세요.",
+                "confidence": 0.75,
+                "raw_json": '{"ad_detected": true}',
+                "analysis_source": "generated_openai_ad_batch",
+            },
+        )
+        upsert_video_ad_analysis(
+            self.conn,
+            {
+                "video_id": "zzz999",
+                "ad_detected": True,
+                "advertiser": "시장리포트",
+                "advertiser_candidates_json": '["시장리포트"]',
+                "evidence_text": "시장리포트와 함께합니다.",
+                "description_excerpt": "설명란에 자세한 내용을 확인하세요.",
+                "confidence": 0.99,
+                "raw_json": '{"ad_detected": true}',
+                "analysis_source": "generated_openai_ad_batch",
+            },
+        )
+        self.conn.commit()
+
+        response = slack_bot.handle_query("월드광고 카카오", data_dir=str(self.data_dir))
+        lines = response.text.splitlines()
+        self.assertTrue(any("광고주 카카오페이증권" in line for line in lines))
+
     def test_handle_query_accepts_simple_natural_language(self) -> None:
         topic = slack_bot.handle_query("반도체 영상 찾아줘", data_dir=str(self.data_dir))
         self.assertIn("abc123", topic.text)

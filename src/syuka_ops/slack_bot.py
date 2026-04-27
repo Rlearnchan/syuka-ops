@@ -1377,28 +1377,26 @@ def ad_search_rows(
         return candidates[:3]
 
     offset = (page - 1) * limit
-    extracted_rows = search_video_ad_rows(conn, query, limit=limit, offset=offset, channel_key=channel_key)
-    extracted_total_count = search_video_ad_rows_count(conn, query, channel_key=channel_key)
-    if extracted_rows:
-        return [
-            {
-                "video_id": row["video_id"],
-                "title": row["title"],
-                "upload_date": row["upload_date"],
-                "view_count": row["view_count"],
-                "like_count": row["like_count"],
-                "thumbnail_url": row["thumbnail_url"],
-                "source_url": row["source_url"],
-                "advertiser": row["advertiser"],
-                "advertiser_candidates": parse_advertiser_candidates(row["advertiser_candidates_json"]),
-                "matched_text": row["evidence_text"] or "",
-                "snippet": row["description_excerpt"] or row["evidence_text"] or "",
-                "match_type": "추출",
-                "score": int(round(float(row["confidence"] or 0) * 100)),
-                "analysis_source": row["analysis_source"],
-            }
-            for row in extracted_rows
-        ], extracted_total_count
+    extracted_rows = search_video_ad_rows(conn, query, limit=100, offset=0, channel_key=channel_key)
+    extracted_matches = [
+        {
+            "video_id": row["video_id"],
+            "title": row["title"],
+            "upload_date": row["upload_date"],
+            "view_count": row["view_count"],
+            "like_count": row["like_count"],
+            "thumbnail_url": row["thumbnail_url"],
+            "source_url": row["source_url"],
+            "advertiser": row["advertiser"],
+            "advertiser_candidates": parse_advertiser_candidates(row["advertiser_candidates_json"]),
+            "matched_text": row["evidence_text"] or "",
+            "snippet": row["description_excerpt"] or row["evidence_text"] or "",
+            "match_type": "추출",
+            "score": int(round(float(row["confidence"] or 0) * 100)),
+            "analysis_source": row["analysis_source"],
+        }
+        for row in extracted_rows
+    ]
 
     matched: list[dict[str, Any]] = []
     lower_query = query.lower().strip()
@@ -1421,8 +1419,8 @@ def ad_search_rows(
             continue
         if detected:
             match_type = "확정"
-            score = 100
             advertiser = detected.get("advertiser", "") or query
+            score = 120 if lower_query and lower_query in advertiser.lower() else 100
             matched_text = detected.get("matched_text", "")
             snippet = detected.get("snippet", "")
         else:
@@ -1450,9 +1448,23 @@ def ad_search_rows(
             }
         )
 
-    matched.sort(key=lambda item: (item["score"], item["upload_date"] or ""), reverse=True)
-    total_count = len(matched)
-    return matched[offset : offset + limit], total_count
+    merged_by_video_id: dict[str, dict[str, Any]] = {}
+    for item in extracted_matches:
+        merged_by_video_id[item["video_id"]] = item
+    for item in matched:
+        existing = merged_by_video_id.get(item["video_id"])
+        if existing is None:
+            merged_by_video_id[item["video_id"]] = item
+            continue
+        if existing.get("match_type") == "추출":
+            continue
+        if (item.get("score") or 0) > (existing.get("score") or 0):
+            merged_by_video_id[item["video_id"]] = item
+
+    merged = list(merged_by_video_id.values())
+    merged.sort(key=lambda item: (item["score"], item["upload_date"] or ""), reverse=True)
+    total_count = len(merged)
+    return merged[offset : offset + limit], total_count
 
 
 def ad_search_response(
